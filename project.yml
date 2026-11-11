@@ -1,0 +1,92 @@
+# XcodeGen 2.46. `xcodegen generate` writes DuoKeyboard.xcodeproj (gitignored).
+#
+# Repo layout this assumes:
+#   project.yml
+#   App/                       containing app (SwiftUI): DuoKeyboardApp.swift, Info.plist (generated)
+#   Keyboard/                  extension shell (UIKit): KeyboardViewController.swift, FaceView.swift, Info.plist (generated)
+#   KeyboardCore/              Swift package: Package.swift, Sources/KeyboardCore, Tests/KeyboardCoreTests
+#   prototype/, scripts/, .github/   unchanged
+#
+# Unit tests live only in KeyboardCore/Tests and run with `swift test --package-path KeyboardCore`
+# on the macOS host. There is deliberately no XCTest bundle target here: the shell is thin enough
+# that its correctness is "it compiles and the simulator shows keys"; everything with logic is
+# in the package. The scheme below still lists the package tests so Cmd-U works in Xcode.
+
+name: DuoKeyboard
+
+options:
+  bundleIdPrefix: com.oherna25
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"            # Swift 6 language mode: complete strict concurrency
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"     # iPhone
+    DEVELOPMENT_TEAM: ""            # set locally; simulator builds do not need it
+    # Both shell targets are UI-only, so main-actor-by-default removes every @MainActor annotation.
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+
+packages:
+  KeyboardCore:
+    path: KeyboardCore
+
+targets:
+  DuoKeyboard:
+    type: application
+    platform: iOS
+    sources: [App]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Duo Keyboard
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.oherna25.duokeyboard
+    dependencies:
+      - target: DuoKeyboardKeyboard   # embedded in PlugIns/ (XcodeGen embeds app extensions by default)
+
+  DuoKeyboardKeyboard:
+    type: app-extension
+    platform: iOS
+    sources: [Keyboard]
+    info:
+      path: Keyboard/Info.plist
+      properties:
+        CFBundleDisplayName: Duo Keyboard
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: true
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: false   # no Full Access in v1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.oherna25.duokeyboard.keyboard
+        APPLICATION_EXTENSION_API_ONLY: YES
+    dependencies:
+      - package: KeyboardCore
+        product: KeyboardCore
+
+schemes:
+  DuoKeyboard:
+    build:
+      targets:
+        DuoKeyboard: all
+        DuoKeyboardKeyboard: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - package: KeyboardCore/KeyboardCoreTests
