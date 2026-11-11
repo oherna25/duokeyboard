@@ -40,7 +40,8 @@ final class FaceView: UIView {
         UIBezierPath(roundedRect: outline, byRoundingCorners: [.topLeft, .topRight],
                      cornerRadii: CGSize(width: 10, height: 10)).fill()
 
-        drawHandle(face, palette: palette, viewRect: viewRect(face.handle), flip: viewRect(face.flipButton))
+        drawHandle(face, palette: palette, handle: viewRect(face.handle), flip: viewRect(face.flipButton),
+                   resize: viewRect(face.resizeGrip))
 
         for cap in face.caps {
             let frame = viewRect(cap.frame)
@@ -56,15 +57,18 @@ final class FaceView: UIView {
         }
     }
 
-    private func drawHandle(_ face: Face, palette: Palette, viewRect handle: CGRect, flip: CGRect) {
+    private func drawHandle(_ face: Face, palette: Palette, handle: CGRect, flip: CGRect, resize: CGRect) {
         let gripColor = palette.label.withAlphaComponent(face.handleIsActive ? 0.7 : 0.35)
-        // Centred on the part of the strip the flip button leaves free.
-        let free = handle.intersection(handle.divided(atDistance: flip.width, from: face.hand == .right ? .minXEdge : .maxXEdge).remainder)
+        // Centred on the part of the strip the buttons leave free.
+        let buttons = flip.union(resize)
+        let free = handle.divided(atDistance: buttons.width, from: face.hand == .right ? .minXEdge : .maxXEdge).remainder
         let grip = CGRect(x: 0, y: 0, width: density.points(8), height: density.points(1.2))
             .offsetBy(dx: free.midX - density.points(4), dy: free.midY - density.points(0.6))
         gripColor.setFill()
         UIBezierPath(roundedRect: grip, cornerRadius: grip.height / 2).fill()
-        drawSymbol("arrow.left.and.right", pointSize: min(flip.height * 0.5, 18), in: flip, color: gripColor)
+        let symbolSize = min(flip.height * 0.5, 18)
+        drawSymbol("arrow.left.and.line.vertical.and.arrow.right", pointSize: symbolSize, in: resize, color: gripColor)
+        drawSymbol("arrow.left.arrow.right", pointSize: symbolSize, in: flip, color: gripColor)
     }
 
     private func drawLabel(_ label: KeyLabel, style: KeyStyle, in frame: CGRect, color: UIColor) {

@@ -87,11 +87,11 @@ From finger to hit-test the path crosses three files: `KeyboardViewController.sw
 
 - **`Millimetres`, `MMPoint<Space>`, `MMRect<Space>`** (Units.swift). Millimetres are the only length unit in the core. The phantom `Space` is `KeyboardSpace` or `FaceSpace`, so hit-testing a touch against rects from the wrong space doesn't compile. **`PointsPerMillimetre`** is the only type that crosses between points and millimetres, and it holds both y-flips (`keyboardPoint(fromView:viewHeight:)` and `viewRect(_:containerHeight:)`). The shell does no coordinate arithmetic of its own. Per encode-lessons-in-structure.
 - **Keyboard space is y-up from the input view's bottom edge.** This is the load-bearing decision for dragging. The input view is anchored at its bottom, so a point measured from the bottom stays put when the height changes. The drag delta `lift += dy` needs no sign flip and doesn't jump. It also makes `Placement.lift` mean what the prototype means: height above the bottom.
-- **`Placement { hand, inset, lift }`** is the user's intent and is never clamped in storage. `Layout` clamps it against the current `Surface` when it derives geometry. The user's position on the 157 mm inner screen survives a trip to the 77 mm outer screen. Derive, don't sync.
+- **`Placement { hand, inset, lift, width }`** is the user's intent and is never clamped in storage. `Layout` clamps it against the current `Surface` when it derives geometry. The user's position on the 157 mm inner screen survives a trip to the 77 mm outer screen. Derive, don't sync.
 - **`Environment { surface, showsGlobeKey }`** holds every host fact that affects layout, in one `Equatable` value. Changing the environment is one input, and resending an equal environment is a no-op. `Surface.bottomInset` subtracts any system bar below the input view, so the lift stays physical relative to the screen bottom, which is what the reach model assumes.
 - **`Layout { height, faceFrame, face, placement }`** is derived on every read from engine state and is never cached. **`Face`** is translation-invariant: dragging changes only `faceFrame.origin`, so the shell moves the view without redrawing it. `Face.rows` is row-major with a uniform `rowHeight`, because hit-testing is the dominant access pattern (every touch event). The row is one division and the key is a scan of at most 10 slots that tile the row edge to edge. Nearest-key falls out of the structure: slots meet at gap midpoints, and clamping to the first or last key covers short-row margins. No index, spatial map or cache is needed later.
 - **`KeyID` is both identity and action.** There is no `KeyAction` enum to keep in sync. **`Keymap.rows(for:showsGlobeKey:)`** is the single list of keys, and it is internal. Drawing, hit-testing, globe placement and accessibility all derive from `Layout`, which derives from this one list.
-- **`Gesture?`** (private) is the touch in progress. Each case carries exactly its own data (`key(over:)`, `backspace(since:emitted:)`, `handle(start:from:dragged:)`, `flip(over:)`). It is an Optional, not a dictionary, so "at most one tracked touch" is a type fact.
+- **`Gesture?`** (private) is the touch in progress. Each case carries exactly its own data (`key(over:)`, `backspace(since:emitted:)`, `adjust(kind:start:from:adjusted:)` for a move or a resize, `flip(over:)`). It is an Optional, not a dictionary, so "at most one tracked touch" is a type fact.
 
 ### Interaction rules (the engine's contract)
 
@@ -99,7 +99,8 @@ From finger to hit-test the path crosses three files: `KeyboardViewController.sw
 |---|---|---|---|---|
 | Character, space, return, shift, 123/ABC | arm the key; commit any held key first (rollover) | re-hit-test; the armed key follows the finger | commit the key under the finger now (nil when off the face) | nothing |
 | Backspace | delete once; start the hold | — | stop | stop |
-| Handle | arm | past 1 mm slop: drag; lift snaps to 0.5 mm; clamp | drag: commit placement. Tap: a second tap within 0.3 s resets inset and lift | dragged position discarded |
+| Handle | arm | past 1 mm slop: drag; lift snaps to 0.5 mm; clamp | drag: commit placement. Tap: a second tap within 0.3 s resets inset, lift and width | dragged position discarded |
+| Resize grip | arm | past 1 mm slop: far edge follows the finger, thumb edge fixed; width snaps to 0.5 mm; clamp to 44 mm, 75 mm and the screen | commit placement | resized width discarded |
 | Flip button | arm | track over or off | if still over: mirror hand | nothing |
 | Globe | never reaches the engine (the overlay `UIControl` owns it) | | | |
 
@@ -146,7 +147,7 @@ KeyboardCore/                       local Swift package (Foundation only)
     Engine.swift                    Instant, TouchID, KeyboardInput, TextEdit, ShiftState, KeyboardEngine (reducer)
     PlacementStore.swift            UserDefaults persistence, versioned record, total load
   Tests/KeyboardCoreTests/          `swift test --package-path KeyboardCore` on macOS
-    GeometryTests.swift             prototype numbers, reach model (31/31 at defaults), clamping, hit-testing, conversions
+    GeometryTests.swift             prototype numbers, calibrated reach model, clamping, hit-testing, conversions
     EngineTests.swift               typing, shift/caps, rollover, slide-to-correct, repeat idempotency, drag/flip/reset
     PlacementStoreTests.swift       round-trip, corrupt and invalid data, throwaway suite
 .gitignore                          add *.xcodeproj, KeyboardCore/.build
@@ -186,6 +187,20 @@ Decision: the design is correct either way.
 - Drawn geometry is fitted to the grant. If the face fits at full size, the lift is clamped so the face top stays inside it. If it cannot fit even at lift 0, the face bottom sits at 0 and the row height shrinks to `(grant - handle - 2 * padding) / rows`, between 5 mm and the spec height. Width, unit and horizontal gap are unchanged.
 - `Layout.placement` is the fitted placement, so a drag starts from what is on screen. The engine's stored placement is never overwritten and stays the user's intent until they drag.
 - An environment change that differs only in `grantedHeight` does not cancel a gesture, because a host that honors the request resizes during a lift drag.
+
+## Measured on a real Duo
+
+Outer screen, right thumb, from a screenshot and the placement record copied off the device:
+
+- The host granted about 46.7 mm (about 282 pt) against a 53 mm request. The fit-to-grant layout handled it, and the lift was clamped.
+- The user had dragged the prototype-width (59 mm) keyboard flush right and down (inset 0, lift 0). q, shift and 123 were still a stretch. In the reach model they sit 64 mm from the pivot. p, at 10 mm, was fine.
+
+Neither prototype guess survived. The 72 mm reach called those keys comfortable, and the 20 mm minimum called p unreachable. The test model is now calibrated to this one hand, 10 mm to 60 mm. Position alone can't help a reach problem the user already maxed out, so:
+
+- `Placement` gained `width`. Keys scale with it by the prototype formulas. A resize grip at the handle's far end, next to the flip button, sets it. A stored record without a width keeps its position and gets the default.
+- The default is width 50 mm (5 mm keys, the original iPhone SE's pitch) at inset 0. This brings the far column about 9 mm closer. All 31 keys are inside the calibrated model, both at full height and at the measured grant.
+
+One hand is one data point. The grip exists so the next hand doesn't need a code change.
 
 ## Tradeoffs accepted
 

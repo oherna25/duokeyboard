@@ -236,9 +236,10 @@ import KeyboardCore
     // MARK: Placement
 
     /// Drags the handle by (dx, dy) mm in keyboard space, which is y up.
-    private func drag(_ t: inout Typist, dx: Double, dy: Double, end: Bool = true) {
+    private func drag(_ t: inout Typist, dx: Double, dy: Double, end: Bool = true,
+                      on region: KeyPath<Face, MMRect<FaceSpace>> = \.handle) {
         let id = TouchID(9)
-        let o = t.engine.layout.faceFrame.origin, c = t.engine.layout.face.handle.center
+        let o = t.engine.layout.faceFrame.origin, c = t.engine.layout.face[keyPath: region].center
         let start = KeyboardPoint(x: o.x + c.x, y: o.y + c.y)
         let stop = KeyboardPoint(x: start.x + Millimetres(dx), y: start.y + Millimetres(dy))
         _ = t.engine.send(.touchBegan(id, start, at: t.clock))
@@ -251,10 +252,10 @@ import KeyboardCore
     @Test func dragMovesFaceLiveAndCommitsOnEnd() {
         var t = Typist()
         drag(&t, dx: -5, dy: 5, end: false)
-        #expect(t.engine.layout.placement == Placement(hand: .right, inset: 12, lift: 14))
+        #expect(t.engine.layout.placement == Placement(hand: .right, inset: 5, lift: 14, width: 50))
         #expect(t.engine.placement == .default)
         _ = t.engine.send(.touchEnded(TouchID(9), KeyboardPoint(x: 0, y: 0), at: t.clock))
-        #expect(t.engine.placement == Placement(hand: .right, inset: 12, lift: 14))
+        #expect(t.engine.placement == Placement(hand: .right, inset: 5, lift: 14, width: 50))
     }
 
     @Test func draggingKeepsTheFaceContentsUnchanged() {
@@ -266,7 +267,7 @@ import KeyboardCore
 
     @Test func leftHandDragMovesTheOtherWay() {
         var t = Typist()
-        t.engine = KeyboardEngine(placement: Placement(hand: .left, inset: 7, lift: 9), environment: t.engine.environment)
+        t.engine = KeyboardEngine(placement: Placement(hand: .left, inset: 7, lift: 9, width: 54), environment: t.engine.environment)
         drag(&t, dx: 4, dy: 0)
         #expect(t.engine.placement.inset == 11)
     }
@@ -280,7 +281,7 @@ import KeyboardCore
     @Test func dragNeverExceedsBounds() {
         var t = Typist()
         drag(&t, dx: -200, dy: 200)
-        let maxInset = t.engine.environment.surface.width - 4 - 59
+        let maxInset = t.engine.environment.surface.width - 4 - 50
         #expect(abs((t.engine.placement.inset - maxInset).value) < 1e-9)
         #expect(abs((t.engine.layout.height - t.engine.environment.surface.screenHeight * 0.6).value) < 1e-9)
         drag(&t, dx: 200, dy: -200)
@@ -305,7 +306,7 @@ import KeyboardCore
     @Test func flipMirrorsHandKeepsInsetAndLift() {
         var t = Typist()
         t.tapFlip()
-        #expect(t.engine.placement == Placement(hand: .left, inset: 7, lift: 9))
+        #expect(t.engine.placement == Placement(hand: .left, inset: 0, lift: 9, width: 50))
     }
 
     @Test func flipReleasedOffTheButtonDoesNothing() {
@@ -325,7 +326,7 @@ import KeyboardCore
         t.tapFlip()
         #expect(t.engine.placement.hand == .left)
         t.tapHandle(); t.tapHandle()
-        #expect(t.engine.placement == Placement(hand: .left, inset: 7, lift: 9))
+        #expect(t.engine.placement == Placement(hand: .left, inset: 0, lift: 9, width: 50))
     }
 
     @Test func slowSecondHandleTapDoesNotReset() {
@@ -334,32 +335,105 @@ import KeyboardCore
         t.tapHandle()
         t.clock = t.clock + 1
         t.tapHandle()
-        #expect(t.engine.placement == Placement(hand: .right, inset: 12, lift: 14))
+        #expect(t.engine.placement == Placement(hand: .right, inset: 5, lift: 14, width: 50))
     }
 
     @Test func dragStartsFromClampedPlacement() {
         var t = Typist()
-        t.engine = KeyboardEngine(placement: Placement(hand: .right, inset: 80, lift: 9), environment: t.engine.environment)
+        t.engine = KeyboardEngine(placement: Placement(hand: .right, inset: 80, lift: 9, width: 54), environment: t.engine.environment)
         let maxInset = t.engine.layout.placement.inset
         drag(&t, dx: 1, dy: 0)
         #expect(abs((t.engine.placement.inset - (maxInset - 1)).value) < 1e-9)
     }
 
+    // MARK: Resize
+
+    @Test func resizeGripWidensAwayFromTheThumbAndKeepsTheThumbEdge() {
+        var t = Typist()
+        let thumbEdge = t.engine.layout.faceFrame.maxX
+        drag(&t, dx: -6, dy: 0, end: false, on: \.resizeGrip)
+        #expect(t.engine.layout.placement.width == 56)
+        #expect(t.engine.placement == .default)
+        #expect(t.engine.layout.face.handleIsActive)
+        _ = t.engine.send(.touchEnded(TouchID(9), KeyboardPoint(x: 0, y: 0), at: t.clock))
+        #expect(t.engine.placement == Placement.default.with(width: 56))
+        #expect(abs((t.engine.layout.faceFrame.maxX - thumbEdge).value) < 1e-9)
+    }
+
+    @Test func narrowerTrayHasSmallerKeysAndBringsTheFarColumnCloser() {
+        var t = Typist()
+        let q = t.center(.character("q")), before = t.engine.layout.slot(of: .character("q"))!.size.width
+        drag(&t, dx: 4, dy: 0, on: \.resizeGrip)
+        #expect(t.engine.placement.width == 46)
+        #expect(t.center(.character("q")).x > q.x)
+        #expect(t.engine.layout.slot(of: .character("q"))!.size.width < before)
+    }
+
+    @Test func leftHandResizeGrowsTheOtherWay() {
+        var t = Typist()
+        t.tapFlip()
+        drag(&t, dx: 3, dy: 0, on: \.resizeGrip)
+        #expect(t.engine.placement == Placement(hand: .left, inset: 0, lift: 9, width: 53))
+    }
+
+    @Test func resizeSnapsAndClamps() {
+        var t = Typist()
+        drag(&t, dx: -2.3, dy: 0, on: \.resizeGrip)
+        #expect(t.engine.placement.width == 52.5)
+        drag(&t, dx: 200, dy: 0, on: \.resizeGrip)
+        #expect(t.engine.placement.width == 44)
+        drag(&t, dx: -200, dy: 0, on: \.resizeGrip)
+        let widest = t.engine.environment.surface.width - 4
+        #expect(abs((t.engine.placement.width - widest).value) < 1e-9)
+        #expect(t.engine.placement.inset == 0)
+    }
+
+    @Test func tappingTheResizeGripChangesNothing() {
+        var t = Typist()
+        drag(&t, dx: 0.3, dy: 0, on: \.resizeGrip)
+        drag(&t, dx: 0.3, dy: 0, on: \.resizeGrip)
+        #expect(t.engine.placement == .default)
+    }
+
+    @Test func doubleTapHandleResetsWidth() {
+        var t = Typist()
+        drag(&t, dx: -8, dy: 0, on: \.resizeGrip)
+        t.tapHandle(); t.tapHandle()
+        #expect(t.engine.placement == .default)
+    }
+
+    @Test func flipKeepsWidth() {
+        var t = Typist()
+        drag(&t, dx: -8, dy: 0, on: \.resizeGrip)
+        t.tapFlip()
+        #expect(t.engine.placement == Placement(hand: .left, inset: 0, lift: 9, width: 58))
+    }
+
+    @Test func aWideTrayOnANarrowScreenIsClampedButRemembered() {
+        let wide = Placement(hand: .right, inset: 0, lift: 9, width: 75)
+        let engine = KeyboardEngine(placement: wide, environment: Environment(surface: .duoOuter, showsGlobeKey: false))
+        #expect(engine.placement.width == 75)
+        #expect(abs((engine.layout.placement.width - (Surface.duoOuter.width - 4)).value) < 1e-9)
+    }
+
     // MARK: Placement validation
 
     @Test func nonFinitePlacementFallsBackToDefault() {
-        let p = Placement(hand: .left, inset: Millimetres(.nan), lift: Millimetres(Double.infinity))
+        let p = Placement(hand: .left, inset: Millimetres(.nan), lift: Millimetres(Double.infinity), width: Millimetres(.nan))
         #expect(p.hand == .left)
         #expect(p.inset == Placement.default.inset)
         #expect(p.lift == Placement.default.lift)
+        #expect(p.width == Placement.default.width)
         let engine = KeyboardEngine(placement: p, environment: Environment(surface: .duoOuter, showsGlobeKey: false))
         #expect(engine.layout.height.value.isFinite)
     }
 
     @Test func placementClampsToAbsoluteBounds() {
-        let p = Placement(hand: .right, inset: -5, lift: 1e9)
+        let p = Placement(hand: .right, inset: -5, lift: 1e9, width: 54)
         #expect(p.inset == 0)
         #expect(p.lift == 200)
+        #expect(Placement(hand: .right, inset: 0, lift: 0, width: 10).width == 44)
+        #expect(Placement(hand: .right, inset: 0, lift: 0, width: 500).width == 75)
     }
 
     // MARK: Environment

@@ -18,42 +18,51 @@ import KeyboardCore
 
     // MARK: Prototype numbers
 
-    @Test func defaultLetterKeysAre5_1mmWide() {
+    @Test func prototypeLetterKeysAre5_1mmWide() {
         // unit 5.9, gx 0.8 -> cap width 5.1 mm (README "5.1 mm letter keys")
-        let letters = caps(layout()).filter { if case .character = $0.id { return true } else { return false } }
+        let letters = caps(layout(.prototype)).filter { if case .character = $0.id { return true } else { return false } }
         #expect(letters.count == 26)
         for cap in letters { #expect(near(cap.frame.size.width, 5.1)) }
     }
 
-    @Test func defaultRowHeightAndGaps() {
-        let face = layout().face
+    @Test func prototypeRowHeightAndGaps() {
+        let face = layout(.prototype).face
         // unit 5.9 -> rowH 8.142; gy = rowH * 0.16 = 1.30272
         #expect(near(face.rowHeight, 8.142))
-        let q = caps(layout())[0]
+        let q = caps(layout(.prototype))[0]
         #expect(near(q.frame.size.height, 8.142 - 8.142 * 0.16))
         #expect(near(q.slot.size.height, 8.142))
     }
 
-    /// Both ends are tight ('q' at 71.7 mm of the 72 mm reach, 'p' at 20.3 mm of the 20 mm
-    /// minimum), so any drift from the prototype formulas fails. Flush at inset 0 and lift 9
-    /// the prototype's own formulas give 26 of 31.
-    @Test(arguments: [(Placement.default, 31), (Placement(hand: .right, inset: 0, lift: 9), 26)])
-    func reachModel(placement: Placement, expectedInReach: Int) {
-        let l = layout(placement)
-        #expect(ReachModel.prototype.keysInReach(l, surface: outer.surface) == expectedInReach)
+    /// The model is calibrated to one hand on a real Duo outer screen (46.7 mm grant). Docked
+    /// flush with the prototype's 59 mm tray, q, shift and 123 sat 64 mm from the pivot and were
+    /// a stretch, while p at 10 mm was fine.
+    @Test func defaultsPutEveryKeyInReach() {
+        // The 46.7 mm grant clamps the default lift, so this also covers a fitted face.
+        for environment in [outer, granted(46.7, globe: true), granted(46.7)] {
+            #expect(ReachModel.calibrated.keysOutOfReach(layout(.default, environment), surface: environment.surface).isEmpty)
+        }
+    }
+
+    @Test func theReportedStretchIsOutOfReach() {
+        let observed = layout(Placement(hand: .right, inset: 0, lift: 0, width: 59), granted(46.7))
+        let far = ReachModel.calibrated.keysOutOfReach(observed, surface: outer.surface)
+        #expect(Set(far) == [.character("q"), .character("a"), .shift, .layerToggle])
     }
 
     @Test func flippingMirrorsDockNotKeyOrder() {
-        let right = layout(Placement(hand: .right, inset: 7, lift: 9))
-        let left = layout(Placement(hand: .left, inset: 7, lift: 9))
+        let right = layout(Placement(hand: .right, inset: 7, lift: 9, width: 59))
+        let left = layout(Placement(hand: .left, inset: 7, lift: 9, width: 59))
         let width = outer.surface.width
         #expect(near(left.faceFrame.minX, width - right.faceFrame.maxX))
         for l in [right, left] {
             let row0 = l.face.rows[0].caps.map(\.id)
             #expect(row0 == "qwertyuiop".map { KeyID.character($0) })
         }
-        #expect(right.face.flipButton.minX == 0)
-        #expect(left.face.flipButton.maxX == left.face.tray.maxX)
+        #expect(right.face.resizeGrip.minX == 0)
+        #expect(right.face.flipButton.minX == right.face.resizeGrip.maxX)
+        #expect(left.face.resizeGrip.maxX == left.face.tray.maxX)
+        #expect(left.face.flipButton.maxX == left.face.resizeGrip.minX)
     }
 
     @Test func physicalSizeIsConstantAcrossScreens() {
@@ -64,12 +73,12 @@ import KeyboardCore
             showsGlobeKey: false)
         let a = layout(.default, outer), b = layout(.default, inner)
         #expect(a.face == b.face)
-        #expect(near(a.faceFrame.minX + a.faceFrame.size.width, outer.surface.width - 2 - 7 + 1.5))
-        #expect(near(b.faceFrame.minX + b.faceFrame.size.width, inner.surface.width - 2 - 7 + 1.5))
+        #expect(near(a.faceFrame.minX + a.faceFrame.size.width, outer.surface.width - 2 + 1.5))
+        #expect(near(b.faceFrame.minX + b.faceFrame.size.width, inner.surface.width - 2 + 1.5))
     }
 
     @Test func placementIsClampedButNotForgotten() {
-        let far = Placement(hand: .right, inset: 80, lift: 9)
+        let far = Placement(hand: .right, inset: 80, lift: 9, width: 59)
         let engine = KeyboardEngine(placement: far, environment: outer)
         let maxInset = outer.surface.width - 2 * 2 - 59
         #expect(near(engine.layout.placement.inset, maxInset))
@@ -78,7 +87,7 @@ import KeyboardCore
     }
 
     @Test func liftIsCappedAtSixtyPercentOfScreenHeight() {
-        let l = layout(Placement(hand: .right, inset: 7, lift: 150))
+        let l = layout(Placement(hand: .right, inset: 7, lift: 150, width: 59))
         #expect(near(l.height, outer.surface.screenHeight * 0.6))
         #expect(near(l.faceFrame.maxY, l.height))
     }
@@ -114,14 +123,14 @@ import KeyboardCore
         }
         let handleTop = l.faceFrame.minY + l.face.handle.maxY
         #expect(l.faceFrame.minY + l.face.handle.minY >= .zero && handleTop <= grant + 0.001)
-        #expect(l.face.rowHeight < 8.142)
+        #expect(l.face.rowHeight < 6.9)
     }
 
     @Test func aGenerousGrantLeavesTheLayoutAsItWas() {
         let today = layout(.default, outer)
         let generous = layout(.default, granted(500))
         #expect(generous == today)
-        #expect(near(today.face.rowHeight, 8.142))
+        #expect(near(today.face.rowHeight, 6.9))
         #expect(today.placement == .default)
     }
 
@@ -139,7 +148,7 @@ import KeyboardCore
     }
 
     @Test func theRequestedHeightIgnoresTheGrant() {
-        for placement in [Placement.default, Placement(hand: .left, inset: 3, lift: 20)] {
+        for placement in [Placement.default, Placement(hand: .left, inset: 3, lift: 20, width: 59)] {
             let a = layout(placement, granted(34.3)), b = layout(placement, granted(500))
             #expect(a.height == b.height)
             #expect(a.height == layout(placement, outer).height)
@@ -158,9 +167,9 @@ import KeyboardCore
             #expect(plain.slot(of: key) == withGlobe.slot(of: key))
         }
         #expect(plain.slot(of: .globe) == nil)
-        #expect(near(withGlobe.slot(of: .globe)!.size.width, 1.5 * 5.9))
-        #expect(near(withGlobe.slot(of: .space)!.size.width, 3.5 * 5.9))
-        #expect(near(plain.slot(of: .space)!.size.width, 5 * 5.9))
+        #expect(near(withGlobe.slot(of: .globe)!.size.width, 1.5 * 5.0))
+        #expect(near(withGlobe.slot(of: .space)!.size.width, 3.5 * 5.0))
+        #expect(near(plain.slot(of: .space)!.size.width, 5 * 5.0))
     }
 
     @Test func keymapRowsFitAndIDsAreUnique() {
@@ -174,7 +183,7 @@ import KeyboardCore
                 var seen: Set<KeyID> = []
                 for row in face.rows {
                     let width = row.caps.reduce(Millimetres.zero) { $0 + $1.slot.size.width }
-                    #expect(width.value <= 59 + 0.0001)
+                    #expect(width.value <= 50 + 0.0001)
                     for cap in row.caps {
                         #expect(seen.insert(cap.id).inserted)
                         #expect(engine.layout.slot(of: cap.id) != nil)
@@ -223,13 +232,15 @@ import KeyboardCore
 
     @Test func handleStripAndFlipButton() {
         for hand in [Hand.right, .left] {
-            let l = layout(Placement(hand: hand, inset: 7, lift: 9))
+            let l = layout(Placement(hand: hand, inset: 7, lift: 9, width: 59))
             let o = l.faceFrame.origin
-            let handle = l.face.handle.center, flip = l.face.flipButton.center
+            let handle = l.face.handle.center, flip = l.face.flipButton.center, grip = l.face.resizeGrip.center
             #expect(l.hitTest(KeyboardPoint(x: handle.x + o.x, y: handle.y + o.y)) == .handle)
             #expect(l.hitTest(KeyboardPoint(x: flip.x + o.x, y: flip.y + o.y)) == .flipButton)
+            #expect(l.hitTest(KeyboardPoint(x: grip.x + o.x, y: grip.y + o.y)) == .resizeGrip)
             // Far end from the thumb, so the left end for the right hand and the right end for the left.
             #expect((flip.x < handle.x) == (hand == .right))
+            #expect((grip.x < flip.x) == (hand == .right))
         }
     }
 
@@ -262,19 +273,19 @@ import KeyboardCore
     }
 }
 
-/// The prototype's reach model, test-only. The thumb pivots 6 mm outside the hand-side edge and
-/// 32 mm up from the screen bottom. A key is in reach when its centre is on screen and 20 mm <=
-/// distance <= 72 mm.
+/// A thumb reach model, test-only. The thumb pivots 6 mm outside the hand-side edge and 32 mm
+/// up from the screen bottom. A key is in reach when its centre is on screen and 10 mm <=
+/// distance <= 60 mm. The prototype guessed 20 mm and 72 mm. See `theReportedStretchIsOutOfReach`.
 struct ReachModel {
     var pivotOutside: Millimetres = 6
     var pivotUp: Millimetres = 32
-    var reach: Millimetres = 72
-    var minimum: Millimetres = 20
+    var reach: Millimetres = 60
+    var minimum: Millimetres = 10
 
-    static let prototype = ReachModel()
+    static let calibrated = ReachModel()
 
     /// With bottomInset 0 the input view bottom is the screen bottom.
-    func keysInReach(_ layout: Layout, surface: Surface) -> Int {
+    func keysOutOfReach(_ layout: Layout, surface: Surface) -> [KeyID] {
         let pivot = KeyboardPoint(
             x: layout.placement.hand == .right ? surface.width + pivotOutside : .zero - pivotOutside,
             y: pivotUp)
@@ -282,7 +293,12 @@ struct ReachModel {
             let c = KeyboardPoint(x: cap.frame.center.x + layout.faceFrame.origin.x,
                                   y: cap.frame.center.y + layout.faceFrame.origin.y)
             let d = c.distance(to: pivot)
-            return c.x > .zero && c.x < surface.width && d >= minimum && d <= reach
-        }.count
+            return !(c.x > .zero && c.x < surface.width && d >= minimum && d <= reach)
+        }.map(\.id)
     }
+}
+
+extension Placement {
+    /// The HTML prototype's geometry, for tests that pin its formulas.
+    static let prototype = Placement(hand: .right, inset: 7, lift: 9, width: 59)
 }

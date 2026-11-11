@@ -23,24 +23,41 @@ public struct Placement: Hashable, Sendable {
     /// Height of the key area's bottom above the bottom margin, measured from the physical
     /// screen bottom (the prototype's `lift`). See `Surface.bottomInset`.
     public let lift: Millimetres
+    /// Key-area width. Keys scale with it, so a narrower tray trades key size for reach.
+    public let width: Millimetres
 
     /// Larger than any screen the keyboard runs on.
     static let absoluteMax: Millimetres = 200
-    private static let defaultInset: Millimetres = 7
+    /// On a real Duo the prototype's 59 mm tray left q, shift and 123 a stretch even docked
+    /// flush, which the user chose over the prototype's 7 mm inset. 50 mm gives 5 mm keys, the
+    /// original iPhone SE's pitch, and brings those keys 9 mm closer to the thumb.
+    private static let defaultInset: Millimetres = 0
     private static let defaultLift: Millimetres = 9
+    private static let defaultWidth: Millimetres = 50
+    static let minWidth: Millimetres = 44
+    static let maxWidth: Millimetres = 75
 
-    public init(hand: Hand, inset: Millimetres, lift: Millimetres) {
+    public init(hand: Hand, inset: Millimetres, lift: Millimetres, width: Millimetres) {
         func bounded(_ v: Millimetres, fallback: Millimetres) -> Millimetres {
             v.value.isFinite ? min(max(v, 0), Placement.absoluteMax) : fallback
         }
         self.hand = hand
         self.inset = bounded(inset, fallback: Placement.defaultInset)
         self.lift = bounded(lift, fallback: Placement.defaultLift)
+        self.width = width.value.isFinite
+            ? min(max(width, Placement.minWidth), Placement.maxWidth) : Placement.defaultWidth
     }
 
-    /// The prototype's "slide to thumb" defaults. At these the reach model puts all 31
-    /// letter-layer keys in reach (tested).
-    public static let `default` = Placement(hand: .right, inset: defaultInset, lift: defaultLift)
+    /// A copy with the given fields replaced.
+    public func with(inset: Millimetres? = nil, lift: Millimetres? = nil, width: Millimetres? = nil,
+                     hand: Hand? = nil) -> Placement {
+        Placement(hand: hand ?? self.hand, inset: inset ?? self.inset, lift: lift ?? self.lift,
+                  width: width ?? self.width)
+    }
+
+    /// At these the calibrated reach model puts all 31 letter-layer keys in reach (tested).
+    public static let `default` = Placement(hand: .right, inset: defaultInset, lift: defaultLift,
+                                            width: defaultWidth)
 }
 
 /// The surface the keyboard is drawn on.
@@ -86,8 +103,6 @@ public struct Environment: Hashable, Sendable {
 /// Reference geometry, transcribed from `gridLayout` and the "compact" variant in
 /// prototype/index.html.
 enum LayoutSpec {
-    /// Key-area width ("cw"). Fixed in v1.
-    static let trayWidth: Millimetres = 59
     /// unit = width / 10; rowH = min(unit * 1.38, 11.5); gx = max(0.8, unit * 0.12); gy = max(1, rowH * 0.16)
     static let unitsPerRow: Double = 10
     static let rowHeightPerUnit: Double = 1.38
@@ -103,8 +118,10 @@ enum LayoutSpec {
     static let bottomMargin: Millimetres = 4
     static let trayPadding: Millimetres = 1.5
     static let handleHeight: Millimetres = 6
-    /// At the handle's far end, away from the thumb, so a flip is deliberate.
+    /// The resize grip sits at the handle's far end with the flip button beside it, both away
+    /// from the thumb so neither is hit by accident.
     static let flipButtonWidth: Millimetres = 9
+    static let resizeGripWidth: Millimetres = 9
     /// How far outside the face a touch still snaps to the nearest key (sides and below).
     static let hitSlop: Millimetres = 3
     /// The face top may rise to at most this fraction of the screen height.
@@ -112,25 +129,30 @@ enum LayoutSpec {
     /// Lift moves in steps so the host app's layout changes at most once per step, not once
     /// per touch event.
     static let liftStep: Millimetres = 0.5
+    static let widthStep: Millimetres = 0.5
 
-    static let unit = trayWidth / unitsPerRow
-    static let rowHeight = min(unit * rowHeightPerUnit, maxRowHeight)
-    static let gapX = max(minGapX, unit * gapXPerUnit)
+    static func unit(width: Millimetres) -> Millimetres { width / unitsPerRow }
+    static func rowHeight(width: Millimetres) -> Millimetres { min(unit(width: width) * rowHeightPerUnit, maxRowHeight) }
+    static func gapX(width: Millimetres) -> Millimetres { max(minGapX, unit(width: width) * gapXPerUnit) }
     static func gapY(rowHeight: Millimetres) -> Millimetres { max(minGapY, rowHeight * gapYPerRow) }
     /// Every layer has the same row count (tested).
-    static let faceHeight = rowHeight * Double(Keymap.rows(for: .letters, showsGlobeKey: false).count)
-        + trayPadding * 2 + handleHeight
+    static func faceHeight(width: Millimetres) -> Millimetres {
+        rowHeight(width: width) * Double(Keymap.rows(for: .letters, showsGlobeKey: false).count)
+            + trayPadding * 2 + handleHeight
+    }
 }
 
 extension Placement {
-    /// Idempotent. Lift is limited by `maxFaceTopFraction`.
+    /// Idempotent. Width first, since the inset and lift bounds depend on it. Lift is limited
+    /// by `maxFaceTopFraction`.
     func clamped(to environment: Environment) -> Placement {
         let surface = environment.surface
-        let maxInset = max(0, surface.width - LayoutSpec.edgeMargin * 2 - LayoutSpec.trayWidth)
+        let width = max(min(self.width, surface.width - LayoutSpec.edgeMargin * 2), Placement.minWidth)
+        let maxInset = max(0, surface.width - LayoutSpec.edgeMargin * 2 - width)
         // faceTop = bottomMargin + lift - bottomInset - trayPadding + faceHeight <= fraction * screenHeight
-        let maxLift = max(0, surface.screenHeight * LayoutSpec.maxFaceTopFraction - LayoutSpec.faceHeight
+        let maxLift = max(0, surface.screenHeight * LayoutSpec.maxFaceTopFraction - LayoutSpec.faceHeight(width: width)
             - LayoutSpec.bottomMargin + LayoutSpec.trayPadding + surface.bottomInset)
-        return Placement(hand: hand, inset: min(inset, maxInset), lift: min(lift, maxLift))
+        return Placement(hand: hand, inset: min(inset, maxInset), lift: min(lift, maxLift), width: width)
     }
 }
 
@@ -156,19 +178,20 @@ public struct Layout: Equatable, Sendable {
         let pad = LayoutSpec.trayPadding
         let surface = environment.surface
         let count = Double(rows.count)
-        let fullFaceHeight = LayoutSpec.rowHeight * count + pad * 2 + LayoutSpec.handleHeight
-        let rowHeight = fullFaceHeight <= surface.grantedHeight ? LayoutSpec.rowHeight
+        let fullRowHeight = LayoutSpec.rowHeight(width: p.width)
+        let fullFaceHeight = fullRowHeight * count + pad * 2 + LayoutSpec.handleHeight
+        let rowHeight = fullFaceHeight <= surface.grantedHeight ? fullRowHeight
             : min(max((surface.grantedHeight - LayoutSpec.handleHeight - pad * 2) / count, LayoutSpec.minRowHeight),
-                  LayoutSpec.rowHeight)
+                  fullRowHeight)
         let face = Face(rows: rows, layer: layer, shift: shift, hand: p.hand, pressed: pressed,
-                        rowHeight: rowHeight)
+                        width: p.width, rowHeight: rowHeight)
         let keyAreaLeft = p.hand == .right
-            ? surface.width - LayoutSpec.edgeMargin - LayoutSpec.trayWidth - p.inset
+            ? surface.width - LayoutSpec.edgeMargin - p.width - p.inset
             : LayoutSpec.edgeMargin + p.inset
         let keyAreaBottom = LayoutSpec.bottomMargin + p.lift - surface.bottomInset
         let wantedBottom = max(0, keyAreaBottom - pad)
         let faceBottom = min(wantedBottom, max(0, surface.grantedHeight - face.size.height))
-        self.placement = Placement(hand: p.hand, inset: p.inset, lift: p.lift - (wantedBottom - faceBottom))
+        self.placement = p.with(lift: p.lift - (wantedBottom - faceBottom))
         self.face = face
         self.faceFrame = MMRect(origin: MMPoint(x: keyAreaLeft - pad, y: faceBottom), size: face.size)
         self.height = wantedBottom + fullFaceHeight
@@ -192,6 +215,7 @@ public struct Face: Equatable, Sendable {
     public let tray: MMRect<FaceSpace>
     public let handle: MMRect<FaceSpace>
     public let flipButton: MMRect<FaceSpace>
+    public let resizeGrip: MMRect<FaceSpace>
     public let hand: Hand
     public let handleIsActive: Bool
     /// Rows top to bottom. All rows share `rowHeight` and start at `keysBottom`, so hit-testing
@@ -212,6 +236,7 @@ public struct Face: Equatable, Sendable {
         // Written positively so a NaN fails the guard and falls through to .none.
         guard point.x >= .zero - slop, point.x < size.width + slop, point.y >= .zero - slop else { return .none }
         if point.y >= handle.minY {
+            if point.x >= resizeGrip.minX && point.x < resizeGrip.maxX { return .resizeGrip }
             return point.x >= flipButton.minX && point.x < flipButton.maxX ? .flipButton : .handle
         }
         let keysTop = keysBottom + rowHeight * Double(rows.count)
@@ -221,27 +246,31 @@ public struct Face: Equatable, Sendable {
     }
 
     init(rows specs: [[KeySpec]], layer: Layer, shift: ShiftState, hand: Hand, pressed: HitTarget?,
-         rowHeight: Millimetres) {
+         width: Millimetres, rowHeight: Millimetres) {
         let pad = LayoutSpec.trayPadding
-        let unit = LayoutSpec.unit
-        let halfGapX = LayoutSpec.gapX * 0.5
+        let unit = LayoutSpec.unit(width: width)
+        let halfGapX = LayoutSpec.gapX(width: width) * 0.5
         let halfGapY = LayoutSpec.gapY(rowHeight: rowHeight) * 0.5
         let count = Double(specs.count)
 
         let tray = MMRect<FaceSpace>(
             origin: MMPoint(x: 0, y: 0),
-            size: MMSize(width: LayoutSpec.trayWidth + pad * 2, height: rowHeight * count + pad * 2))
+            size: MMSize(width: width + pad * 2, height: rowHeight * count + pad * 2))
         let handle = MMRect<FaceSpace>(
             origin: MMPoint(x: 0, y: tray.maxY),
             size: MMSize(width: tray.size.width, height: LayoutSpec.handleHeight))
-        let flipX = hand == .right ? Millimetres.zero : tray.size.width - LayoutSpec.flipButtonWidth
+        let gripX = hand == .right ? Millimetres.zero : tray.size.width - LayoutSpec.resizeGripWidth
+        let resizeGrip = MMRect<FaceSpace>(
+            origin: MMPoint(x: gripX, y: handle.minY),
+            size: MMSize(width: LayoutSpec.resizeGripWidth, height: handle.size.height))
+        let flipX = hand == .right ? resizeGrip.maxX : resizeGrip.minX - LayoutSpec.flipButtonWidth
         let flipButton = MMRect<FaceSpace>(
             origin: MMPoint(x: flipX, y: handle.minY),
             size: MMSize(width: LayoutSpec.flipButtonWidth, height: handle.size.height))
 
         self.rows = specs.enumerated().map { index, spec in
             let total = spec.reduce(0) { $0 + $1.width }
-            var x = pad + (LayoutSpec.trayWidth - unit * total) * 0.5
+            var x = pad + (width - unit * total) * 0.5
             let y = pad + rowHeight * (count - 1 - Double(index))
             return FaceRow(caps: spec.map { key in
                 let width = unit * key.width
@@ -256,8 +285,9 @@ public struct Face: Equatable, Sendable {
         self.tray = tray
         self.handle = handle
         self.flipButton = flipButton
+        self.resizeGrip = resizeGrip
         self.hand = hand
-        self.handleIsActive = pressed == .handle || pressed == .flipButton
+        self.handleIsActive = pressed == .handle || pressed == .flipButton || pressed == .resizeGrip
         self.keysBottom = pad
         self.rowHeight = rowHeight
     }
@@ -317,5 +347,6 @@ public enum HitTarget: Hashable, Sendable {
     case key(KeyID)
     case handle
     case flipButton
+    case resizeGrip
     case none
 }

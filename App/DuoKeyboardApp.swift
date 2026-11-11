@@ -27,7 +27,7 @@ struct SetupView: View {
                 TextField("Type here", text: $trial, axis: .vertical)
             }
             Section("Move it") {
-                Text("Drag the bar above the keys to move them sideways or up. Tap the arrows at the end of the bar to switch hands. Double-tap the bar to reset.")
+                Text("Drag the bar above the keys to move them sideways or up. Drag the grip at the far end of the bar to make the keys narrower or wider. Tap the arrows beside it to switch hands. Double-tap the bar to reset.")
             }
         }
     }

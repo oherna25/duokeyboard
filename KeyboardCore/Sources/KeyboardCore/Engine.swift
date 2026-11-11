@@ -61,7 +61,7 @@ enum Timing {
 /// - At most one tracked touch. A new touch while a key is held commits the held key first
 ///   (rollover, as in the system keyboard). A new touch while backspace is held stops the
 ///   repeat, and a new touch during a drag is ignored.
-/// - `placement` changes only at commit points (drag end, flip, handle double-tap), so the
+/// - `placement` changes only at commit points (drag or resize end, flip, handle double-tap), so the
 ///   shell persists exactly when it changes. A drag lives in `gesture`, so a cancelled drag
 ///   leaves the saved placement untouched.
 /// - `tick` is idempotent. Deletes owed are a function of hold start and now, and the engine
@@ -119,7 +119,7 @@ public struct KeyboardEngine: Sendable {
         switch gesture {
         case let .key(_, began, over?):
             edits = commit(over, began: began, ended: at)
-        case .handle, .flip:
+        case .adjust, .flip:
             return []
         case .key, .backspace, nil:
             break
@@ -134,28 +134,36 @@ public struct KeyboardEngine: Sendable {
         case .key(let key):
             gesture = .key(id, began: at, over: key)
         case .handle:
-            gesture = .handle(id, start: point, from: current.placement, dragged: nil)
+            gesture = .adjust(id, .move, start: point, from: current.placement, adjusted: nil)
+        case .resizeGrip:
+            gesture = .adjust(id, .resize, start: point, from: current.placement, adjusted: nil)
         case .flipButton:
             gesture = .flip(id, over: true)
         }
         return edits
     }
 
-    /// The dragged placement is `from` moved by the delta. Right hand inset -= dx, left hand
-    /// inset += dx, and lift += dy with no sign flip since y is up. Lift snaps to
-    /// `LayoutSpec.liftStep`, then clamps.
+    /// A move shifts `from` by the delta. Right hand inset -= dx, left hand inset += dx, and
+    /// lift += dy with no sign flip since y is up. A resize moves the far edge with the finger
+    /// while the thumb-side edge stays put, so width takes the inset's sign. Lift and width snap
+    /// to their steps, then clamp.
     private mutating func touchMoved(_ id: TouchID, _ point: KeyboardPoint, _ at: Instant) {
         guard let current = gesture, current.touch == id else { return }
         switch current {
         case let .key(_, began, _):
             gesture = .key(id, began: began, over: Self.committableKey(layout.hitTest(point)))
-        case let .handle(_, start, from, dragged):
+        case let .adjust(_, kind, start, from, adjusted):
             let dx = point.x - start.x, dy = point.y - start.y
-            guard dragged != nil || hypot(dx.value, dy.value) >= Timing.dragSlop.value else { return }
-            let inset = from.hand == .right ? from.inset - dx : from.inset + dx
-            let lift = Millimetres(((from.lift + dy) / LayoutSpec.liftStep).rounded()) * LayoutSpec.liftStep.value
-            let moved = Placement(hand: from.hand, inset: inset, lift: lift).clamped(to: environment)
-            gesture = .handle(id, start: start, from: from, dragged: moved)
+            guard adjusted != nil || hypot(dx.value, dy.value) >= Timing.dragSlop.value else { return }
+            let towardFar = from.hand == .right ? .zero - dx : dx
+            func snapped(_ v: Millimetres, _ step: Millimetres) -> Millimetres {
+                Millimetres((v / step).rounded()) * step.value
+            }
+            let next = switch kind {
+            case .move: from.with(inset: from.inset + towardFar, lift: snapped(from.lift + dy, LayoutSpec.liftStep))
+            case .resize: from.with(width: snapped(from.width + towardFar, LayoutSpec.widthStep))
+            }
+            gesture = .adjust(id, kind, start: start, from: from, adjusted: next.clamped(to: environment))
         case .flip:
             gesture = .flip(id, over: layout.hitTest(point) == .flipButton)
         case .backspace:
@@ -170,7 +178,7 @@ public struct KeyboardEngine: Sendable {
         return key
     }
 
-    /// A double-tap on the handle resets inset and lift but keeps the hand. A flip commits
+    /// A double-tap on the handle resets inset, lift and width but keeps the hand. A flip commits
     /// `layout.placement` mirrored, so a clamped position flips as seen.
     private mutating func touchEnded(_ id: TouchID, _ point: KeyboardPoint, _ at: Instant) -> [TextEdit] {
         guard let ending = gesture, ending.touch == id else { return [] }
@@ -183,13 +191,15 @@ public struct KeyboardEngine: Sendable {
             return commit(key, began: began, ended: at)
         case .backspace:
             return []
-        case let .handle(_, _, _, dragged):
-            if let dragged {
-                placement = dragged
+        case let .adjust(_, kind, _, _, adjusted):
+            if let adjusted {
+                placement = adjusted
+                lastTap = nil
+            } else if kind == .resize {
                 lastTap = nil
             } else if let previous = lastTap, previous.target == .handle,
                       at - previous.ended <= Timing.doubleTapWindow {
-                placement = Placement(hand: effective.hand, inset: Placement.default.inset, lift: Placement.default.lift)
+                placement = Placement.default.with(hand: effective.hand)
                 lastTap = nil
             } else {
                 lastTap = LastTap(target: .handle, ended: at)
@@ -197,7 +207,7 @@ public struct KeyboardEngine: Sendable {
             return []
         case let .flip(_, over):
             if over && target == .flipButton {
-                placement = Placement(hand: effective.hand.mirrored, inset: effective.inset, lift: effective.lift)
+                placement = effective.with(hand: effective.hand.mirrored)
             }
             return []
         }
@@ -263,28 +273,33 @@ public struct KeyboardEngine: Sendable {
 private enum Gesture: Sendable {
     case key(TouchID, began: Instant, over: KeyID?)
     case backspace(TouchID, since: Instant, emitted: Int)
-    case handle(TouchID, start: KeyboardPoint, from: Placement, dragged: Placement?)
+    case adjust(TouchID, Adjustment, start: KeyboardPoint, from: Placement, adjusted: Placement?)
     case flip(TouchID, over: Bool)
 
     var touch: TouchID {
         switch self {
-        case .key(let id, _, _), .backspace(let id, _, _), .handle(let id, _, _, _), .flip(let id, _): id
+        case .key(let id, _, _), .backspace(let id, _, _), .adjust(let id, _, _, _, _), .flip(let id, _): id
         }
     }
 
     var draggedPlacement: Placement? {
-        guard case .handle(_, _, _, let dragged) = self else { return nil }
-        return dragged
+        guard case .adjust(_, _, _, _, let adjusted) = self else { return nil }
+        return adjusted
     }
 
     var pressedTarget: HitTarget? {
         switch self {
         case .key(_, _, let over): over.map { .key($0) }
         case .backspace: .key(.backspace)
-        case .handle: .handle
+        case .adjust(_, .move, _, _, _): .handle
+        case .adjust(_, .resize, _, _, _): .resizeGrip
         case .flip(_, let over): over ? .flipButton : nil
         }
     }
+}
+
+private enum Adjustment: Sendable {
+    case move, resize
 }
 
 private struct LastTap: Sendable {
