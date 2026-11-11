@@ -2,7 +2,6 @@ import CoreGraphics
 import Testing
 import KeyboardCore
 
-/// Geometry fidelity against prototype/index.html, and hit-testing. Public API only.
 @Suite struct GeometryTests {
     let outer = Environment(surface: .duoOuter, showsGlobeKey: false)
     let outerWithGlobe = Environment(surface: .duoOuter, showsGlobeKey: true)
@@ -35,12 +34,9 @@ import KeyboardCore
         #expect(near(q.slot.size.height, 8.142))
     }
 
-    /// The headline finding: at the defaults all 31 keys are in reach. Both ends are tight
-    /// ('q' at 71.7 mm of the 72 mm reach; 'p' at 20.3 mm of the 20 mm minimum), so any drift
-    /// from the prototype formulas fails this test.
-    ///
-    /// Flush (inset 0, lift 9): the prototype's own formulas give 26 of 31. The brief says 5 outside
-    /// at the 2 mm margin with no lift; this pins what the formulas produce at lift 9.
+    /// Both ends are tight ('q' at 71.7 mm of the 72 mm reach, 'p' at 20.3 mm of the 20 mm
+    /// minimum), so any drift from the prototype formulas fails. Flush at inset 0 and lift 9
+    /// the prototype's own formulas give 26 of 31.
     @Test(arguments: [(Placement.default, 31), (Placement(hand: .right, inset: 0, lift: 9), 26)])
     func reachModel(placement: Placement, expectedInReach: Int) {
         let l = layout(placement)
@@ -188,7 +184,6 @@ import KeyboardCore
         }
     }
 
-    /// Switches to the symbols layer by tapping the layer toggle.
     private func toggle(_ engine: inout KeyboardEngine) {
         let at = engine.layout.slot(of: .layerToggle)!.center
         let id = TouchID(1), t = Instant(secondsSinceBoot: 1)
@@ -233,7 +228,7 @@ import KeyboardCore
             let handle = l.face.handle.center, flip = l.face.flipButton.center
             #expect(l.hitTest(KeyboardPoint(x: handle.x + o.x, y: handle.y + o.y)) == .handle)
             #expect(l.hitTest(KeyboardPoint(x: flip.x + o.x, y: flip.y + o.y)) == .flipButton)
-            // Far end from the thumb: left end for the right hand, right end for the left.
+            // Far end from the thumb, so the left end for the right hand and the right end for the left.
             #expect((flip.x < handle.x) == (hand == .right))
         }
     }
@@ -267,9 +262,9 @@ import KeyboardCore
     }
 }
 
-/// The prototype's reach model, for tests only (it judges the design; it does not ship).
-/// Thumb pivot 6 mm outside the hand-side edge and 32 mm up from the screen bottom; a key is in
-/// reach when its centre is on screen and 20 mm <= distance <= 72 mm.
+/// The prototype's reach model, test-only. The thumb pivots 6 mm outside the hand-side edge and
+/// 32 mm up from the screen bottom. A key is in reach when its centre is on screen and 20 mm <=
+/// distance <= 72 mm.
 struct ReachModel {
     var pivotOutside: Millimetres = 6
     var pivotUp: Millimetres = 32
@@ -278,8 +273,7 @@ struct ReachModel {
 
     static let prototype = ReachModel()
 
-    /// Keyboard space is y-up from the input view bottom; with bottomInset 0 that is the screen
-    /// bottom, so the pivot is (width + 6, 32) for the right hand and (-6, 32) for the left.
+    /// With bottomInset 0 the input view bottom is the screen bottom.
     func keysInReach(_ layout: Layout, surface: Surface) -> Int {
         let pivot = KeyboardPoint(
             x: layout.placement.hand == .right ? surface.width + pivotOutside : .zero - pivotOutside,

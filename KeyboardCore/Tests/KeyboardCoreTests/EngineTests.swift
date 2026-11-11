@@ -2,11 +2,9 @@ import Testing
 import Foundation
 import KeyboardCore
 
-/// The input state machine, driven exactly as the shell drives it: touches at points, times as
-/// values. No mocks: the engine returns its effects.
 @Suite struct EngineTests {
 
-    // MARK: Caller-shaped helpers (the usage the API was designed from)
+    // MARK: Helpers
 
     struct Typist {
         var engine = KeyboardEngine(placement: .default,
@@ -15,7 +13,6 @@ import KeyboardCore
         var text = ""
         private var nextTouch: UInt = 1
 
-        /// Down and up at the centre of `key`, 80 ms apart, then 200 ms idle.
         mutating func tap(_ key: KeyID) {
             let at = engine.layout.slot(of: key)!.center
             let id = TouchID(nextTouch); nextTouch += 1
@@ -160,7 +157,7 @@ import KeyboardCore
         // Committing the toggle switches layers, but the second finger aimed at the letters face.
         _ = t.engine.send(.touchBegan(b, q, at: t.clock + 0.05))
         #expect(t.engine.layer == .symbols)
-        // The finger is still on the key under it after the redraw: "1" sits where "q" was.
+        // The finger is still on the key under it after the redraw, since "1" sits where "q" was.
         #expect(t.engine.send(.touchEnded(b, q, at: t.clock + 0.1)) == [.insert("1")])
     }
 
@@ -238,7 +235,7 @@ import KeyboardCore
 
     // MARK: Placement
 
-    /// Down on the handle, then drag by (dx, dy) mm in keyboard space (y up) in two moves.
+    /// Drags the handle by (dx, dy) mm in keyboard space, which is y up.
     private func drag(_ t: inout Typist, dx: Double, dy: Double, end: Bool = true) {
         let id = TouchID(9)
         let o = t.engine.layout.faceFrame.origin, c = t.engine.layout.face.handle.center

@@ -2,7 +2,6 @@ import Testing
 import Foundation
 import KeyboardCore
 
-/// Persistence against a throwaway defaults domain, so `swift test` never touches real prefs.
 @Suite struct PlacementStoreTests {
     let defaults: UserDefaults
     let store: PlacementStore

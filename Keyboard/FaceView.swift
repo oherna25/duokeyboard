@@ -1,15 +1,8 @@
 import UIKit
 import KeyboardCore
 
-/// Draws a `Face` with Core Graphics in one `draw(_:)`. No subviews, no layers per key, no touch
-/// handling (user interaction is disabled; the controller handles touches).
-///
-/// Why one drawn view: the face is a value; drawing it is a pure function of that value. There
-/// is no retained per-key object tree to keep in sync with it, so the view can never show a
-/// state the engine is not in. Memory is one backing store (face ~374 x 251 pt, @3x ~ 3.4 MB).
-///
-/// Redraw policy: `face` and `density` redraw only when they change. Moving the keyboard changes
-/// the view's frame, not its face, so a drag never redraws.
+/// Draws a `Face` in one `draw(_:)`, with no per-key views or layers. Moving the keyboard
+/// changes the frame, not the face, so a drag never redraws.
 final class FaceView: UIView {
 
     var face: Face? {
@@ -30,20 +23,18 @@ final class FaceView: UIView {
         isOpaque = false
         isUserInteractionEnabled = false
         contentMode = .redraw
-        // Palette depends on light/dark; redraw when it changes.
+        // The palette depends on light or dark.
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: FaceView, _) in view.setNeedsDisplay() }
     }
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    /// Every rect goes through `viewRect(_:containerHeight:)` with the face's own height. That
-    /// one call is the only coordinate conversion in this file.
     override func draw(_ rect: CGRect) {
         guard let face else { return }
         let palette = Palette(traitCollection)
         let faceHeight = face.size.height
         func viewRect<Space>(_ r: MMRect<Space>) -> CGRect { density.viewRect(r, containerHeight: faceHeight) }
 
-        // Tray and handle strip share one outline, rounded at the top like the prototype.
+        // Rounded at the top like the prototype.
         let outline = viewRect(face.tray).union(viewRect(face.handle))
         palette.tray.setFill()
         UIBezierPath(roundedRect: outline, byRoundingCorners: [.topLeft, .topRight],
@@ -98,7 +89,6 @@ final class FaceView: UIView {
         image.draw(at: CGPoint(x: frame.midX - image.size.width / 2, y: frame.midY - image.size.height / 2))
     }
 
-    /// The only map from the core's semantic symbols to SF Symbols.
     private static func symbolName(_ symbol: KeySymbol) -> String {
         switch symbol {
         case .shift: "shift"
@@ -120,11 +110,10 @@ final class FaceView: UIView {
         }
     }
 
-    // MARK: Accessibility (derived from the same face; no second key list)
+    // MARK: Accessibility
 
-    /// One element per cap, trait `.keyboardKey`, frame from `cap.slot` in this view's space.
-    /// Activation is the default (a synthesized tap at the element's centre), so VoiceOver typing
-    /// goes through the same touch path as a finger. There is no second way to commit a key.
+    /// Activation is the default synthesized tap at the element's centre, so VoiceOver typing
+    /// takes the same touch path as a finger.
     override var accessibilityElements: [Any]? {
         get {
             if let elements { return elements }
@@ -142,8 +131,7 @@ final class FaceView: UIView {
         set { }
     }
 
-    /// Only when the set of keys or their labels change (layer switch, shift), not on every
-    /// press highlight.
+    /// Skips press highlights, which change no label.
     private func invalidateAccessibility(from old: Face?) {
         func spoken(_ face: Face?) -> [String] { face.map { $0.caps.map(Self.spokenName) } ?? [] }
         guard spoken(face) != spoken(old) else { return }
@@ -152,7 +140,6 @@ final class FaceView: UIView {
     }
 }
 
-/// Colours for both appearances. Shell-only: the core never knows about colour.
 private struct Palette {
     let tray: UIColor
     let characterKey: UIColor

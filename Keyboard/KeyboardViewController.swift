@@ -1,46 +1,34 @@
 import UIKit
 import KeyboardCore
 
-/// The whole extension shell. Owns the engine and does four things, none of them policy:
-/// 1. converts UIKit touches to `KeyboardInput` (the only place `UITouch` is read),
-/// 2. applies returned `TextEdit`s to `textDocumentProxy`,
-/// 3. reconciles views, the height constraint, the repeat timer and persistence from engine
-///    properties after every input (`reconcile()`),
-/// 4. measures the environment and sends it when it changes.
+/// The extension shell. Holds no policy, which lives in the engine.
 ///
-/// Touch routing: there is no per-key view and no custom touch view. `FaceView` has user
-/// interaction disabled, so every touch in the input view hit-tests to the root `UIInputView`,
-/// which forwards unhandled touches up the responder chain to this controller. One touch
-/// handler, three files from finger to hit-test (this, Engine.swift, Layout.swift).
+/// `FaceView` has user interaction disabled, so every touch hit-tests to the root `UIInputView`
+/// and reaches this controller up the responder chain.
 ///
-/// Isolation: the extension target builds with SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, so
-/// this type, its timer task and FaceView are main-actor without annotations. The engine is a
-/// Sendable value owned here; nothing else holds it, so there is no shared mutable state.
+/// The extension target builds with SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, so this type and
+/// FaceView are main-actor without annotations.
 final class KeyboardViewController: UIInputViewController {
 
     private let store: PlacementStore
     private var engine: KeyboardEngine
-    /// What is on disk. `reconcile()` saves when `engine.placement` differs from it.
     private var lastSaved: Placement
 
     private let faceView = FaceView()
-    /// Transparent control over the globe key's hit slot. Wired with the Apple-documented
-    /// target-action for `handleInputModeList(from:with:)` (`.allTouchEvents`), so tap-to-switch
-    /// and long-press-for-list behave exactly as the system expects. The face draws the key;
-    /// this control only owns its touches.
+    /// Transparent control over the globe key's slot. `handleInputModeList(from:with:)` needs
+    /// target-action on `.allTouchEvents` for tap-to-switch and long-press-for-list to work.
     private let globeControl = UIControl()
     private var heightConstraint: NSLayoutConstraint?
     private var wakeTask: Task<Void, Never>?
     private var scheduledWake: Instant?
-    /// Fingers currently down on the root view, so `viewWillDisappear` can cancel them: the
-    /// engine tracks one touch by id and the system sends no cancel when the keyboard is dismissed.
+    /// The system sends no cancel when the keyboard is dismissed, so `viewWillDisappear`
+    /// cancels these itself.
     private var liveTouches: Set<TouchID> = []
 
     // MARK: Lifecycle
 
-    /// The engine exists from construction (no implicitly unwrapped optional). It starts on the
-    /// Duo outer surface; the real environment arrives in viewDidLayoutSubviews before anything
-    /// is drawn.
+    /// Starts on the Duo outer surface. The real environment arrives in viewDidLayoutSubviews
+    /// before anything is drawn.
     override init(nibName: String?, bundle: Bundle?) {
         store = PlacementStore(defaults: .standard)
         lastSaved = store.load()
@@ -64,7 +52,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // An Apple engineer on the developer forums says an extension can change its height only after its view first draws.
+        // The host ignores height requests made before the input view first draws (per an Apple engineer on the developer forums).
         if heightConstraint == nil {
             let constraint = view.heightAnchor.constraint(equalToConstant: 0)
             constraint.priority = UILayoutPriority(UILayoutPriority.required.rawValue - 1)
@@ -77,7 +65,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        // A held backspace must not keep deleting after the keyboard goes away.
+        // The system sends no cancel on dismissal, and a held backspace would keep deleting.
         let held = liveTouches
         liveTouches = []
         for id in held { send(.touchCancelled(id)) }
@@ -88,19 +76,18 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // Width changes on fold / unfold and rotation. Idempotent: an equal environment is a
-        // no-op inside the engine, and reconcile() only touches what changed.
+        // Width changes on fold, unfold and rotation.
         refreshEnvironment()
         reconcile()
     }
 
     override func textDidChange(_ textInput: (any UITextInput)?) {
         super.textDidChange(textInput)
-        // needsInputModeSwitchKey can change between fields / hosts.
+        // needsInputModeSwitchKey can change between fields and hosts.
         refreshEnvironment()
     }
 
-    // MARK: Touches -> engine
+    // MARK: Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
@@ -145,8 +132,7 @@ final class KeyboardViewController: UIInputViewController {
         reconcile()
     }
 
-    /// Makes the UIKit side match the engine. Every step compares before writing, so calling it
-    /// any number of times is harmless (idempotent).
+    /// Idempotent. Every step compares before writing.
     private func reconcile() {
         let layout = engine.layout
         let density = engine.environment.surface.density
@@ -154,8 +140,8 @@ final class KeyboardViewController: UIInputViewController {
         let height = density.points(layout.height)
         if let heightConstraint, heightConstraint.constant != height { heightConstraint.constant = height }
 
-        // Position from the view's actual bottom edge, the same reference the touch conversion
-        // uses, so the face and the finger agree even while the height constraint catches up.
+        // Positioned from the view's actual bottom edge, as touches are, so the face and the
+        // finger agree while the height constraint catches up.
         let container = view.bounds.height > 0 ? density.millimetres(view.bounds.height) : layout.height
         let frame = density.viewRect(layout.faceFrame, containerHeight: container)
         if faceView.frame != frame { faceView.frame = frame }
@@ -174,8 +160,7 @@ final class KeyboardViewController: UIInputViewController {
         scheduleWake(engine.nextWake)
     }
 
-    /// One timer slot, replaced on every reconcile. Correct even if a stale task fires,
-    /// because `.tick` is idempotent.
+    /// A stale task firing is harmless because `.tick` is idempotent.
     private func scheduleWake(_ wake: Instant?) {
         guard wake != scheduledWake else { return }
         scheduledWake = wake
@@ -186,8 +171,8 @@ final class KeyboardViewController: UIInputViewController {
         wakeTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
-            // Cleared first: a tick that emits nothing leaves nextWake unchanged, and the
-            // reconcile after it must still be allowed to schedule the same deadline again.
+            // Cleared first, since a tick that emits nothing leaves nextWake unchanged and the
+            // reconcile after it must still reschedule that deadline.
             self.scheduledWake = nil
             self.send(.tick(Instant(secondsSinceBoot: ProcessInfo.processInfo.systemUptime)))
         }
@@ -200,12 +185,11 @@ final class KeyboardViewController: UIInputViewController {
         send(.environmentChanged(env))
     }
 
-    /// The only place screen facts are read. Nil until the view has a width.
+    /// Nil until the view has a width.
     ///
     /// `bottomInset` stays 0 in v1. Deriving it from the input view's frame in screen
-    /// coordinates feeds the view's own height back into the environment, which would cancel
-    /// drags (an environment change cancels the gesture) and could collapse the lift. Measure
-    /// the real system-bar height on the device before wiring it.
+    /// coordinates feeds the view's own height back into the environment, which cancels drags
+    /// and could collapse the lift. Measure the real system bar height on a device first.
     private func measureEnvironment() -> Environment? {
         let width = view.bounds.width
         guard width > 0 else { return nil }

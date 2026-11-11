@@ -3,13 +3,9 @@ import Foundation
 
 // MARK: - Length
 
-/// A physical length. The core's only length unit.
-///
-/// Invariant: physical size is what must stay constant across screens (a thumb is the same
-/// size on the inner and outer screen), so every geometric quantity in the core is specified
-/// and computed in millimetres. Points exist only at the UIKit boundary, and the only way to
-/// cross it is `PointsPerMillimetre`. A `CGFloat` cannot be passed where a length is expected,
-/// so "forgot to convert" is a compile error, not a layout bug.
+/// A physical length, the core's only length unit. A thumb is the same size on the inner and
+/// outer screen, so geometry is in millimetres and points exist only at the UIKit boundary.
+/// A `CGFloat` cannot be passed where a length is expected, so a missed conversion fails to compile.
 public struct Millimetres: Hashable, Comparable, Sendable, AdditiveArithmetic,
     ExpressibleByFloatLiteral, ExpressibleByIntegerLiteral
 {
@@ -24,31 +20,23 @@ public struct Millimetres: Hashable, Comparable, Sendable, AdditiveArithmetic,
     public static func - (a: Self, b: Self) -> Self { Self(a.value - b.value) }
     public static func * (a: Self, k: Double) -> Self { Self(a.value * k) }
     public static func / (a: Self, k: Double) -> Self { Self(a.value / k) }
-    /// Ratio of two lengths (dimensionless).
     public static func / (a: Self, b: Self) -> Double { a.value / b.value }
     public static func < (a: Self, b: Self) -> Bool { a.value < b.value }
 }
 
 // MARK: - Coordinate spaces
 
-/// Keyboard space: origin at the bottom-left corner of the input view, x rightward, **y upward**.
-///
-/// Why y-up: the input view is anchored at its bottom edge. When the user lifts the keyboard
-/// its height constraint grows and its top edge moves, but every point measured from the
-/// bottom stays put. A drag in progress therefore never "jumps" when the view resizes under
-/// the finger. This is the space touches arrive in and the space placement is expressed in.
+/// Origin at the bottom-left of the input view, y upward. The view is anchored at its bottom
+/// edge, so when a lift grows its height every point measured from the bottom stays put and a
+/// drag never jumps under the finger.
 public enum KeyboardSpace {}
 
-/// Face space: origin at the bottom-left corner of the face (tray plus drag-handle strip),
-/// y upward.
-///
-/// Why a second space: the face's contents are translation-invariant. Moving the keyboard
-/// changes only `Layout.faceFrame.origin`, never the `Face` value, so the shell can move the
-/// face view without redrawing it on every drag frame.
+/// Origin at the bottom-left of the face, y upward. Separate from keyboard space so moving the
+/// keyboard changes only `Layout.faceFrame.origin` and never the `Face` value.
 public enum FaceSpace {}
 
-/// A point in a named space. The phantom `Space` makes it a compile error to hit-test a
-/// keyboard-space touch against face-space rects without converting.
+/// The phantom `Space` makes hit-testing a keyboard-space touch against face-space rects a
+/// compile error.
 public struct MMPoint<Space>: Hashable, Sendable {
     public var x: Millimetres
     public var y: Millimetres
@@ -65,7 +53,7 @@ public struct MMSize: Hashable, Sendable {
     public init(width: Millimetres, height: Millimetres) { self.width = width; self.height = height }
 }
 
-/// An axis-aligned rect in a named space. `origin` is the bottom-left corner (both spaces are y-up).
+/// `origin` is the bottom-left corner.
 public struct MMRect<Space>: Hashable, Sendable {
     public var origin: MMPoint<Space>
     public var size: MMSize
@@ -93,13 +81,10 @@ public struct MMRect<Space>: Hashable, Sendable {
 public typealias KeyboardPoint = MMPoint<KeyboardSpace>
 public typealias FacePoint = MMPoint<FaceSpace>
 
-// MARK: - The one boundary: points <-> millimetres
+// MARK: - Points and millimetres
 
 /// Display density, and the only conversion between UIKit points and core millimetres.
-///
-/// Invariant: `value` is finite and > 0 (checked once, in `init?`).
-/// Both directions of the y-flip (UIKit is y-down, the core is y-up) live here and nowhere
-/// else, so the shell never does coordinate arithmetic of its own.
+/// `value` is finite and > 0. Both directions of the y-flip (UIKit is y-down) live here.
 public struct PointsPerMillimetre: Hashable, Sendable {
     public let value: Double
 
@@ -108,17 +93,14 @@ public struct PointsPerMillimetre: Hashable, Sendable {
         self.value = value
     }
 
-    /// iPhone Duo outer screen: 1398 x 2034 px at 460 ppi, @3x -> 460 / 25.4 / 3 = 6.04 pt/mm.
+    /// Duo outer screen, 1398 x 2034 px at 460 ppi and @3x, so 460 / 25.4 / 3 = 6.04 pt/mm.
     public static let duoOuter = PointsPerMillimetre(unchecked: 460.0 / 25.4 / 3.0)
 
     private init(unchecked value: Double) { self.value = value }
 
-    /// Resolves density from the screen's native pixel size and scale.
-    ///
-    /// iOS does not expose physical ppi, so this is a small table of known panels keyed by
-    /// native pixel size (the Duo outer panel, and the inner panel once its ppi is known),
-    /// with a fallback by scale (@3x -> 460 ppi, @2x -> 326 ppi), which is right for every
-    /// current iPhone panel to within a few percent.
+    /// iOS does not expose physical ppi, so known panels are keyed by native pixel size, with
+    /// a fallback by scale (@3x is 460 ppi, @2x is 326 ppi) that is right for current iPhone
+    /// panels to within a few percent.
     public static func resolve(nativePixelSize: CGSize, scale: CGFloat) -> PointsPerMillimetre {
         let long = max(nativePixelSize.width, nativePixelSize.height)
         let short = min(nativePixelSize.width, nativePixelSize.height)
@@ -130,16 +112,11 @@ public struct PointsPerMillimetre: Hashable, Sendable {
     public func points(_ length: Millimetres) -> CGFloat { CGFloat(length.value * value) }
     public func millimetres(_ points: CGFloat) -> Millimetres { Millimetres(Double(points) / value) }
 
-    /// UIKit view location (y-down, points) -> keyboard space (y-up, mm).
-    /// `viewHeight` is the input view's *current* bounds height, read at the moment of the touch.
+    /// `viewHeight` is the input view's current bounds height, read at the moment of the touch.
     public func keyboardPoint(fromView location: CGPoint, viewHeight: CGFloat) -> KeyboardPoint {
         KeyboardPoint(x: millimetres(location.x), y: millimetres(viewHeight - location.y))
     }
 
-    /// A y-up rect inside a container of height `containerHeight` -> a y-down UIKit rect in
-    /// that container's coordinates. Used for the face view's frame (keyboard space, container =
-    /// input view), the globe control's frame, and every rect FaceView draws (face space,
-    /// container = face).
     public func viewRect<Space>(_ rect: MMRect<Space>, containerHeight: Millimetres) -> CGRect {
         let origin = CGPoint(x: points(rect.minX), y: points(containerHeight - rect.maxY))
         let size = CGSize(width: points(rect.size.width), height: points(rect.size.height))

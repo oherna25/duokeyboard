@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// The containing app. It exists to (1) ship the extension and (2) let the person enable and try
-/// it. It does not link KeyboardCore: nothing here needs geometry or input state, and no data is
-/// shared with the extension in v1 (no App Group).
+/// Ships the extension and lets the person enable and try it. Does not link KeyboardCore, and
+/// shares no data with the extension in v1 (no App Group).
 @main
 struct DuoKeyboardApp: App {
     var body: some Scene {
@@ -10,7 +9,6 @@ struct DuoKeyboardApp: App {
     }
 }
 
-/// Numbered steps, a button to Settings, and a field to type in.
 struct SetupView: View {
     @State private var trial = ""
     @Environment(\.openURL) private var openURL
