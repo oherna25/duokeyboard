@@ -253,11 +253,15 @@ public struct KeyboardEngine: Sendable {
         return [.deleteBackward]
     }
 
-    /// No-op when equal. Otherwise store it and cancel any gesture (its geometry is gone).
+    /// No-op when equal. Otherwise store it and cancel any gesture (its geometry is gone),
+    /// except when only the granted height moved: a host that honors our height request resizes
+    /// during a lift drag, and keyboard space is anchored at the bottom, so the gesture stays valid.
     private mutating func environmentChanged(_ env: Environment) {
         guard env != environment else { return }
+        var comparable = env
+        comparable.surface.grantedHeight = environment.surface.grantedHeight
+        if comparable != environment { gesture = nil }
         environment = env
-        gesture = nil
     }
 
     /// Applies one key's action.

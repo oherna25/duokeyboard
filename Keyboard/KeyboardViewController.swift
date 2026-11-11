@@ -62,11 +62,9 @@ final class KeyboardViewController: UIInputViewController {
         reconcile()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        // Installed here, not in viewDidLoad: the system adds its own height constraint on
-        // presentation, and ours must exist alongside it at priority 999 to win without an
-        // unsatisfiable-constraints log.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // An Apple engineer on the developer forums says an extension can change its height only after its view first draws.
         if heightConstraint == nil {
             let constraint = view.heightAnchor.constraint(equalToConstant: 0)
             constraint.priority = UILayoutPriority(UILayoutPriority.required.rawValue - 1)
@@ -216,8 +214,10 @@ final class KeyboardViewController: UIInputViewController {
             PointsPerMillimetre.resolve(nativePixelSize: $0.nativeBounds.size, scale: $0.nativeScale)
         } ?? .duoOuter
         let screenHeight = screen.map { density.millimetres($0.bounds.height) } ?? Surface.duoOuter.screenHeight
+        let height = view.bounds.height
+        let granted = height > 0 ? density.millimetres(height) : engine.layout.height
         let surface = Surface(width: density.millimetres(width), screenHeight: screenHeight,
-                              bottomInset: 0, density: density)
+                              grantedHeight: granted, bottomInset: 0, density: density)
         return Environment(surface: surface, showsGlobeKey: needsInputModeSwitchKey)
     }
 }

@@ -54,14 +54,20 @@ public struct Surface: Hashable, Sendable {
     public var width: Millimetres
     /// Full screen height. Bounds how far the keyboard may be lifted.
     public var screenHeight: Millimetres
+    /// The input view's current height: what the host actually granted, which may differ from the
+    /// height `Layout` requests. Drawn geometry is fitted to it; the request never depends on it.
+    public var grantedHeight: Millimetres
     /// Distance from the input view's bottom edge to the physical screen bottom: non-zero when
     /// the system draws its own bar (globe / dictation) below third-party keyboards. Subtracted
     /// from the lift so the keys stay where the thumb expects them physically. 0 if unknown.
     public var bottomInset: Millimetres
     public var density: PointsPerMillimetre
 
-    public init(width: Millimetres, screenHeight: Millimetres, bottomInset: Millimetres, density: PointsPerMillimetre) {
-        self.width = width; self.screenHeight = screenHeight; self.bottomInset = bottomInset; self.density = density
+    /// `grantedHeight` defaults to the full screen height, a grant that never constrains.
+    public init(width: Millimetres, screenHeight: Millimetres, grantedHeight: Millimetres? = nil,
+                bottomInset: Millimetres, density: PointsPerMillimetre) {
+        self.width = width; self.screenHeight = screenHeight; self.grantedHeight = grantedHeight ?? screenHeight
+        self.bottomInset = bottomInset; self.density = density
     }
 
     /// The Duo outer screen, 466 x 678 pt at 6.04 pt/mm, input view flush with the screen bottom.
@@ -93,6 +99,8 @@ enum LayoutSpec {
     static let unitsPerRow: Double = 10
     static let rowHeightPerUnit: Double = 1.38
     static let maxRowHeight: Millimetres = 11.5
+    /// Rows shrink to fit a small grant, but never below a tappable size.
+    static let minRowHeight: Millimetres = 5
     static let minGapX: Millimetres = 0.8
     static let gapXPerUnit: Double = 0.12
     static let minGapY: Millimetres = 1
@@ -117,7 +125,7 @@ enum LayoutSpec {
     static let unit = trayWidth / unitsPerRow
     static let rowHeight = min(unit * rowHeightPerUnit, maxRowHeight)
     static let gapX = max(minGapX, unit * gapXPerUnit)
-    static let gapY = max(minGapY, rowHeight * gapYPerRow)
+    static func gapY(rowHeight: Millimetres) -> Millimetres { max(minGapY, rowHeight * gapYPerRow) }
     /// Every layer has the same row count (tested), so the face height is layer-independent.
     static let faceHeight = rowHeight * Double(Keymap.rows(for: .letters, showsGlobeKey: false).count)
         + trayPadding * 2 + handleHeight
@@ -144,13 +152,16 @@ extension Placement {
 /// pressed target). It is never mutated or cached by anyone, so it can never be stale.
 /// Computing one is ~31 rect calculations; the engine derives it on demand.
 public struct Layout: Equatable, Sendable {
-    /// Height for the input view's height constraint: face top in keyboard space.
+    /// The height to request for the input view: the face top in keyboard space at full size.
+    /// Independent of `Surface.grantedHeight`; a host that ignores the request would otherwise
+    /// pin it at the grant for good.
     public let height: Millimetres
     /// Where the face sits, in keyboard space. Changes during a drag; `face` does not.
     public let faceFrame: MMRect<KeyboardSpace>
     /// The translation-invariant contents. The shell redraws only when this changes.
     public let face: Face
-    /// The clamped placement that produced this layout (drag starts from it).
+    /// The placement as drawn, clamped to the surface and fitted to the granted height (a drag
+    /// starts from it, so it never feels dead).
     public let placement: Placement
 
     /// Built only by the engine; callers get layouts from `KeyboardEngine.layout`.
@@ -158,18 +169,25 @@ public struct Layout: Equatable, Sendable {
          pressed: HitTarget?) {
         let p = placement.clamped(to: environment)
         let rows = Keymap.rows(for: layer, showsGlobeKey: environment.showsGlobeKey)
-        let face = Face(rows: rows, layer: layer, shift: shift, hand: p.hand, pressed: pressed)
         let pad = LayoutSpec.trayPadding
         let surface = environment.surface
+        let count = Double(rows.count)
+        let fullFaceHeight = LayoutSpec.rowHeight * count + pad * 2 + LayoutSpec.handleHeight
+        let rowHeight = fullFaceHeight <= surface.grantedHeight ? LayoutSpec.rowHeight
+            : min(max((surface.grantedHeight - LayoutSpec.handleHeight - pad * 2) / count, LayoutSpec.minRowHeight),
+                  LayoutSpec.rowHeight)
+        let face = Face(rows: rows, layer: layer, shift: shift, hand: p.hand, pressed: pressed,
+                        rowHeight: rowHeight)
         let keyAreaLeft = p.hand == .right
             ? surface.width - LayoutSpec.edgeMargin - LayoutSpec.trayWidth - p.inset
             : LayoutSpec.edgeMargin + p.inset
         let keyAreaBottom = LayoutSpec.bottomMargin + p.lift - surface.bottomInset
-        self.placement = p
+        let wantedBottom = max(0, keyAreaBottom - pad)
+        let faceBottom = min(wantedBottom, max(0, surface.grantedHeight - face.size.height))
+        self.placement = Placement(hand: p.hand, inset: p.inset, lift: p.lift - (wantedBottom - faceBottom))
         self.face = face
-        self.faceFrame = MMRect(origin: MMPoint(x: keyAreaLeft - pad, y: max(0, keyAreaBottom - pad)),
-                                size: face.size)
-        self.height = faceFrame.maxY
+        self.faceFrame = MMRect(origin: MMPoint(x: keyAreaLeft - pad, y: faceBottom), size: face.size)
+        self.height = wantedBottom + fullFaceHeight
     }
 
     /// Nearest-target hit-testing for a touch in keyboard space. See `Face.hitTest`.
@@ -233,10 +251,12 @@ public struct Face: Equatable, Sendable {
         return .key((caps.first { point.x < $0.slot.maxX } ?? caps[caps.count - 1]).id)
     }
 
-    init(rows specs: [[KeySpec]], layer: Layer, shift: ShiftState, hand: Hand, pressed: HitTarget?) {
+    init(rows specs: [[KeySpec]], layer: Layer, shift: ShiftState, hand: Hand, pressed: HitTarget?,
+         rowHeight: Millimetres) {
         let pad = LayoutSpec.trayPadding
-        let unit = LayoutSpec.unit, rowHeight = LayoutSpec.rowHeight
-        let halfGapX = LayoutSpec.gapX * 0.5, halfGapY = LayoutSpec.gapY * 0.5
+        let unit = LayoutSpec.unit
+        let halfGapX = LayoutSpec.gapX * 0.5
+        let halfGapY = LayoutSpec.gapY(rowHeight: rowHeight) * 0.5
         let count = Double(specs.count)
 
         let tray = MMRect<FaceSpace>(

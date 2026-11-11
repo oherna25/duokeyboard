@@ -95,6 +95,67 @@ import KeyboardCore
         #expect(near(flat - raised, 5))
     }
 
+    // MARK: Host-granted height
+
+    func granted(_ height: Millimetres, globe: Bool = false) -> Environment {
+        var surface = Surface.duoOuter
+        surface.grantedHeight = height
+        return Environment(surface: surface, showsGlobeKey: globe)
+    }
+
+    @Test(arguments: [false, true])
+    func everythingFitsInsideATightGrant(globe: Bool) {
+        let grant: Millimetres = 34.3
+        let l = layout(.default, granted(grant, globe: globe))
+        #expect(l.faceFrame.minY >= .zero)
+        #expect(l.faceFrame.maxY <= grant + 0.001)
+        for cap in l.face.caps {
+            let slot = l.slot(of: cap.id)!
+            #expect(slot.minY >= .zero - 0.001 && slot.maxY <= grant + 0.001)
+            let frameBottom = l.faceFrame.minY + cap.frame.minY, frameTop = l.faceFrame.minY + cap.frame.maxY
+            #expect(frameBottom >= .zero && frameTop <= grant + 0.001)
+            #expect(l.hitTest(slot.center) == .key(cap.id))
+        }
+        let handleTop = l.faceFrame.minY + l.face.handle.maxY
+        #expect(l.faceFrame.minY + l.face.handle.minY >= .zero && handleTop <= grant + 0.001)
+        #expect(l.face.rowHeight < 8.142)
+    }
+
+    @Test func aGenerousGrantLeavesTheLayoutAsItWas() {
+        let today = layout(.default, outer)
+        let generous = layout(.default, granted(500))
+        #expect(generous == today)
+        #expect(near(today.face.rowHeight, 8.142))
+        #expect(today.placement == .default)
+    }
+
+    @Test func anIntermediateGrantClampsLiftAndKeepsFaceSize() {
+        let today = layout(.default, outer)
+        let l = layout(.default, granted(45))
+        #expect(l.face == today.face)
+        #expect(near(l.faceFrame.maxY, 45))
+        #expect(l.placement.lift < Placement.default.lift)
+        #expect(l.placement.inset == Placement.default.inset)
+    }
+
+    @Test func rowHeightNeverShrinksBelowFiveMillimetres() {
+        #expect(layout(.default, granted(10)).face.rowHeight == 5)
+    }
+
+    @Test func theRequestedHeightIgnoresTheGrant() {
+        for placement in [Placement.default, Placement(hand: .left, inset: 3, lift: 20)] {
+            let a = layout(placement, granted(34.3)), b = layout(placement, granted(500))
+            #expect(a.height == b.height)
+            #expect(a.height == layout(placement, outer).height)
+        }
+    }
+
+    @Test func aFittedPlacementIsNotWrittenBackToTheEngine() {
+        let engine = KeyboardEngine(placement: .default, environment: granted(34.3))
+        #expect(engine.placement == .default)
+        #expect(engine.layout.placement.lift < Placement.default.lift)
+    }
+
     @Test func globeKeyShrinksOnlySpace() {
         let plain = layout(.default, outer), withGlobe = layout(.default, outerWithGlobe)
         for key in [KeyID.layerToggle, .return] {

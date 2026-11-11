@@ -375,6 +375,27 @@ import KeyboardCore
         #expect(t.engine.send(.touchEnded(id, h, at: t.clock + 0.1)) == [.insert("h")])
     }
 
+    @Test func grantOnlyEnvironmentChangeKeepsADrag() {
+        var t = Typist()
+        drag(&t, dx: 0, dy: 3, end: false)
+        var surface = t.engine.environment.surface
+        surface.grantedHeight = surface.grantedHeight - 10
+        _ = t.engine.send(.environmentChanged(Environment(surface: surface, showsGlobeKey: false)))
+        #expect(t.engine.environment.surface.grantedHeight == surface.grantedHeight)
+        _ = t.engine.send(.touchEnded(TouchID(9), KeyboardPoint(x: 0, y: 0), at: t.clock))
+        #expect(t.engine.placement.lift == 12)
+    }
+
+    @Test func widthChangeCancelsADrag() {
+        var t = Typist()
+        drag(&t, dx: 0, dy: 3, end: false)
+        var surface = t.engine.environment.surface
+        surface.width = surface.width * 2
+        _ = t.engine.send(.environmentChanged(Environment(surface: surface, showsGlobeKey: false)))
+        _ = t.engine.send(.touchEnded(TouchID(9), KeyboardPoint(x: 0, y: 0), at: t.clock))
+        #expect(t.engine.placement == .default)
+    }
+
     @Test func environmentChangeCancelsGesture() {
         var t = Typist()
         let id = TouchID(1), h = t.center(.character("h"))

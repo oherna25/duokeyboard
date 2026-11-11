@@ -176,6 +176,17 @@ One fix found in review:
 
 The flush-dock reach test pins 26 of 31 keys, which is what the prototype's formulas produce. The brief has been corrected to match.
 
+## Host-granted height
+
+Measured on the simulator (iOS 27.2, iPhone Duo): the host pins the input view's height with a required `UIView-Encapsulated-Layout-Height` constraint (207 pt, about 34.3 mm). Our own height constraint lost at priority 999 and 1000, with `allowsSelfSizing`, with a smaller 150 pt request, and when installed in `viewDidAppear`. The face is about 320 pt tall, so its top, the handle and the qwerty row, was clipped. The premise "the extension chooses its own height" is false on this host, and we cannot test whether the real device honors the request.
+
+Decision: the design is correct either way.
+
+- `Surface.grantedHeight` is the input view's current height, measured by the shell. `Layout.height` is still the request, a function of placement and the screen only. If it depended on the grant, a host that ignores the request would deadlock it at the grant.
+- Drawn geometry is fitted to the grant. If the face fits at full size, the lift is clamped so the face top stays inside it. If it cannot fit even at lift 0, the face bottom sits at 0 and the row height shrinks to `(grant - handle - 2 * padding) / rows`, between 5 mm and the spec height. Width, unit and horizontal gap are unchanged.
+- `Layout.placement` is the fitted placement, so a drag starts from what is on screen. The engine's stored placement is never overwritten and stays the user's intent until they drag.
+- An environment change that differs only in `grantedHeight` does not cancel a gesture, because a host that honors the request resizes during a lift drag.
+
 ## Tradeoffs accepted
 
 - We give up per-key UIKit niceties (highlight animations, per-view accessibility for free) and get one source of truth, nearest-key hit-testing as plain arithmetic, and no view tree to keep in sync. Accessibility is restored by deriving elements from the same `Face`. They activate through synthesized taps, so there is no second commit path.
