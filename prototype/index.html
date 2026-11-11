@@ -1,0 +1,475 @@
+<title>Duo Reach Keyboard</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: device stage on the left, instrument panel on the right; stacks on phones. Units inside the device are millimetres. */
+:root {
+  --bg: #eceff4; --surface: #ffffff; --ink: #161a22; --muted: #586172; --line: #d4d9e3;
+  --accent: #2d5be3; --accent-ink: #ffffff;
+  --screen: #f7f8fa; --tray: #d2d6df; --key: #ffffff; --key-ink: #161a22; --key-mod: #b9bfcc;
+  --frame: #1d2027;
+  --ok: #1d7a4b; --warn: #9a6200; --bad: #c2362b;
+  --f-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1115; --surface: #171a20; --ink: #e8ebf0; --muted: #9aa2b1; --line: #2a2f38;
+  --accent: #8aa6ff; --accent-ink: #0f1115;
+  --screen: #121418; --tray: #1d2026; --key: #3a3f49; --key-ink: #f1f3f6; --key-mod: #2a2e36;
+  --frame: #000000;
+  --ok: #5bd49a; --warn: #f0b44c; --bad: #ff7a6e; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0f1115; --surface: #171a20; --ink: #e8ebf0; --muted: #9aa2b1; --line: #2a2f38;
+  --accent: #8aa6ff; --accent-ink: #0f1115;
+  --screen: #121418; --tray: #1d2026; --key: #3a3f49; --key-ink: #f1f3f6; --key-mod: #2a2e36;
+  --frame: #000000;
+  --ok: #5bd49a; --warn: #f0b44c; --bad: #ff7a6e; color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-sans); font-size: 14px; line-height: 1.45; }
+.app { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 32px; max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+header h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 68ch; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+@media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.stage-wrap { min-width: 0; height: min(78vh, 760px); min-height: 420px; display: grid; place-items: center; }
+.device { background: var(--frame); padding: 9px; border-radius: 26px; box-shadow: 0 18px 40px rgba(0,0,0,.18); }
+.screen { position: relative; overflow: hidden; background: var(--screen); border-radius: 18px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.doc { position: absolute; left: 0; right: 0; top: 0; padding: 14px 16px; display: grid; align-content: start; gap: 8px; overflow: hidden; }
+.doc .label { font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.doc .target { color: var(--muted); font-size: 15px; }
+.doc .typed { font-size: 18px; min-height: 1.5em; word-break: break-word; }
+.doc .typed::after { content: ""; display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: -0.18em; margin-left: 1px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .doc .typed::after { animation: none; } .key { transition: none !important; } }
+.tray { position: absolute; background: var(--tray); pointer-events: none; }
+svg.reach { position: absolute; inset: 0; pointer-events: none; }
+.keys { position: absolute; inset: 0; }
+.key { position: absolute; display: grid; place-items: center; border: 0; padding: 0; border-radius: 5px; background: var(--key); color: var(--key-ink); font-family: var(--f-sans); box-shadow: 0 1px 0 rgba(0,0,0,.28); cursor: pointer; touch-action: none; transition: transform 60ms, background 60ms; }
+.key.mod { background: var(--key-mod); }
+.key.on { background: var(--accent); color: var(--accent-ink); }
+.key.down { background: var(--accent); color: var(--accent-ink); }
+.key.out { outline: 2px solid var(--bad); outline-offset: -2px; }
+.key:focus-visible { outline: 2px solid var(--accent); }
+.handle { position: absolute; height: 22px; display: grid; place-items: center; cursor: grab; touch-action: none; }
+.handle span { width: 54px; height: 6px; border-radius: 3px; background: var(--muted); opacity: .7; }
+.handle:active { cursor: grabbing; }
+
+.panel { display: grid; gap: 14px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 12px; }
+.card h2 { margin: 0; font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--bg); border-radius: 9px; padding: 3px; gap: 3px; }
+.seg button { border: 0; background: transparent; color: var(--ink); font: 500 13px/1.2 var(--f-sans); padding: 8px 6px; border-radius: 7px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+.seg button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.seg button kbd { font: 400 10px var(--f-mono); color: var(--muted); margin-left: 4px; }
+.note { margin: 0; color: var(--muted); font-size: 13px; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { border: 1px solid var(--line); border-radius: 9px; padding: 8px; display: grid; gap: 2px; }
+.stat b { font: 500 17px/1.1 var(--f-mono); font-variant-numeric: tabular-nums; }
+.stat small { color: var(--muted); font-size: 11px; line-height: 1.25; }
+.stat[data-tone="ok"] b { color: var(--ok); } .stat[data-tone="warn"] b { color: var(--warn); } .stat[data-tone="bad"] b { color: var(--bad); }
+.row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 52px; gap: 8px; align-items: center; }
+.row label { color: var(--muted); font-size: 13px; }
+.row output { font: 400 12px var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.row input { width: 100%; accent-color: var(--accent); }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn { border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 500 13px var(--f-sans); padding: 9px 10px; border-radius: 9px; cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font: 500 11px var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 0 0 6px; }
+td { padding: 6px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); }
+.empty { color: var(--muted); font-size: 13px; }
+.ruler { height: 10px; background: repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px 10%); border-bottom: 2px solid var(--ink); }
+
+body.real .app { padding: 0; max-width: none; }
+body.real header, body.real .panel { display: none; }
+body.real .grid { display: block; }
+body.real .stage-wrap { position: fixed; inset: 0; height: auto; min-height: 0; display: block; }
+body.real .device { padding: 0; border-radius: 0; box-shadow: none; background: none; }
+body.real .screen { border-radius: 0; }
+.realbar { position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; z-index: 5; display: flex; gap: 6px; align-items: center; padding-block: 6px; padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); background: var(--surface); border-bottom: 1px solid var(--line); }
+.realbar .seg { flex: 1; min-width: 0; }
+.realbar .seg button { padding: 6px 2px; font-size: 12px; }
+.realbar .btn { padding: 6px 9px; font-size: 12px; }
+body.real .doc { padding-top: 58px; }
+</style>
+
+<div class="app">
+  <header>
+    <h1>Duo Reach Keyboard</h1>
+    <p>Throwaway prototype. It compares one-handed keyboard layouts on the iPhone Duo's 5.4″ outer screen, which is about 12 mm wider than an iPhone 18 Pro. Red outlines mark keys outside your thumb's reach. The shaded band is the area your thumb can reach.</p>
+  </header>
+  <main class="grid">
+    <section class="stage-wrap" id="stageWrap">
+      <div class="device" id="device">
+        <div class="screen" id="screen">
+          <div class="doc" id="doc">
+            <span class="label">Type this, then return</span>
+            <span class="target" id="target"></span>
+            <span class="typed" id="typed"></span>
+          </div>
+          <div class="tray" id="tray"></div>
+          <svg class="reach" id="reach" preserveAspectRatio="none"></svg>
+          <div class="keys" id="keys"></div>
+          <div class="handle" id="handle" hidden title="Drag to move the keyboard"><span></span></div>
+        </div>
+      </div>
+      <div class="realbar" id="realbar" hidden>
+        <div class="seg" id="realSeg"></div>
+        <button class="btn" id="realHand" type="button"></button>
+        <button class="btn" id="exitReal" type="button">Exit</button>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="card">
+        <h2>Layout</h2>
+        <div class="seg" id="variantSeg"></div>
+        <p class="note" id="variantNote"></p>
+        <div class="stats">
+          <div class="stat" id="statReach"><b>–</b><small>keys in reach</small></div>
+          <div class="stat" id="statSize"><b>–</b><small>smallest letter key (iPhone ≈ 5.3)</small></div>
+          <div class="stat" id="statFar"><b>–</b><small>farthest key from thumb base</small></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Hand and device</h2>
+        <div class="seg" id="handSeg">
+            <button type="button" data-hand="left">Left hand</button>
+            <button type="button" data-hand="right">Right hand</button>
+        </div>
+        <div class="row"><label for="grip">Grip height</label><input id="grip" type="range" min="10" max="80" step="1"><output id="gripOut"></output></div>
+        <div class="row"><label for="reachIn">Thumb reach</label><input id="reachIn" type="range" min="45" max="95" step="1"><output id="reachOut"></output></div>
+        <div class="row" data-for="compact"><label for="cw">Width</label><input id="cw" type="range" min="50" max="110" step="1"><output id="cwOut"></output></div>
+        <div class="row" data-for="compact"><label for="lift">Lift</label><input id="lift" type="range" min="0" max="50" step="1"><output id="liftOut"></output></div>
+        <div class="row" data-for="reachability"><label for="slide">Slide</label><input id="slide" type="range" min="0" max="45" step="1"><output id="slideOut"></output></div>
+        <div class="row" data-for="arc"><label for="unit">Key size</label><input id="unit" type="range" min="6" max="11" step="0.1"><output id="unitOut"></output></div>
+        <div class="row" data-for="arc"><label for="rot">Fan angle</label><input id="rot" type="range" min="-20" max="20" step="1"><output id="rotOut"></output></div>
+        <p class="note">The outer screen is 77 × 112 mm, calculated from 1398 × 2034 px at 460 ppi. Grip height is where the base of your thumb rests, measured up from the bottom edge.</p>
+      </div>
+
+      <div class="card">
+        <h2>Typing trials</h2>
+        <table>
+          <thead><tr><th>Layout</th><th class="num">WPM</th><th class="num">Fixes</th><th class="num">Exact</th></tr></thead>
+          <tbody id="results"></tbody>
+        </table>
+        <p class="empty" id="resultsEmpty">No trials yet. Type the phrase on the keyboard and press return. Each layout gets its own row, so you can compare them.</p>
+      </div>
+
+      <div class="card">
+        <h2>Try it on the Duo</h2>
+        <p class="note">Open this page on the closed Duo and tap Real size. Then type with one thumb. The density is preset to the outer screen's 6.04 points per mm. On any other device, drag the slider until the bar below is 5 cm long.</p>
+        <div class="row"><label for="density">Density</label><input id="density" type="range" min="3" max="9" step="0.05"><output id="densityOut"></output></div>
+        <div class="ruler" id="ruler"></div>
+        <button class="btn primary" id="goReal" type="button">Real size</button>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script>
+const RMIN = 20;
+const SCREEN = { W: 77.2, H: 112.3 };
+const PHRASES = [
+  "the quick brown fox jumps over the lazy dog",
+  "pack my box with five dozen liquor jugs",
+  "running late, be there in ten",
+  "can you send me the address again",
+  "sounds good, see you tomorrow at noon",
+];
+
+const ch = v => ({ t: "char", v, u: 1 });
+const ALPHA = [
+  [..."qwertyuiop"].map(ch),
+  [..."asdfghjkl"].map(ch),
+  [{ t: "shift", u: 1.5 }, ..."zxcvbnm".split("").map(ch), { t: "back", u: 1.5 }],
+];
+const NUM = [
+  [..."1234567890"].map(ch),
+  [..."-/:;()$&@\""].map(ch),
+  [{ t: "char", v: ".", u: 1.4 }, { t: "char", v: ",", u: 1.4 }, { t: "char", v: "?", u: 1.4 }, { t: "char", v: "!", u: 1.4 }, { t: "char", v: "'", u: 1.4 }, { t: "back", u: 1.5 }],
+];
+const BOTTOM_WIDE = [{ t: "layer", u: 2.5 }, { t: "space", u: 5 }, { t: "enter", u: 2.5 }];
+const BOTTOM_ARC = [{ t: "layer", u: 1.5 }, { t: "space", u: 3.5 }, { t: "enter", u: 2 }];
+
+const S = {
+  variant: "compact", hand: "right",
+  grip: 32, reach: 72, cw: 59, pos: 7, lift: 9, unit: 8, rot: 0, slide: 26,
+  layer: "alpha", shift: false, text: "", phrase: 0,
+  trial: null, results: [], real: false, density: 6.04,
+};
+try { const d = parseFloat(localStorage.getItem("duo.density")); if (d > 0) S.density = d; } catch (e) {}
+
+function gridLayout(rows, x0, width, bottom) {
+  const unit = width / 10;
+  const rowH = Math.min(unit * 1.38, 11.5);
+  const gx = Math.max(0.8, unit * 0.12), gy = Math.max(1, rowH * 0.16);
+  const top = bottom - rows.length * rowH;
+  const keys = [];
+  rows.forEach((row, i) => {
+    const total = row.reduce((a, k) => a + k.u, 0);
+    let x = x0 + (width - total * unit) / 2;
+    const cy = top + rowH * (i + 0.5);
+    for (const k of row) {
+      const w = k.u * unit;
+      keys.push({ k, cx: x + w / 2, cy, w: w - gx, h: rowH - gy, rot: 0 });
+      x += w;
+    }
+  });
+  return { keys, box: { x: x0 - 1.5, y: top - 1.5, w: width + 3, h: bottom - top + 3 } };
+}
+
+function arcLayout(rows, { W, P }) {
+  const unit = S.unit, step = unit * 1.3;
+  const r0 = S.reach - unit * 0.7;
+  const pxRight = W + 6;
+  const keys = [];
+  rows.forEach((row, i) => {
+    const r = r0 - i * step;
+    const total = row.reduce((a, k) => a + k.u, 0);
+    const span = total * unit / r;
+    const edge = (W - 2 - unit / 2) - pxRight;
+    const thMin = Math.acos(Math.max(-1, Math.min(1, edge / r)));
+    let thc = Math.max((142 + S.rot) * Math.PI / 180, thMin + span / 2);
+    if (S.hand === "left") thc = Math.PI - thc;
+    let a = 0;
+    for (const k of row) {
+      const th = thc + span / 2 - (a + k.u / 2) * unit / r;
+      a += k.u;
+      keys.push({ k, cx: P.x + r * Math.cos(th), cy: P.y - r * Math.sin(th), w: k.u * unit - 0.9, h: step - 1.4, rot: 90 - th * 180 / Math.PI });
+    }
+  });
+  return { keys, box: null };
+}
+
+const VARIANTS = [
+  { id: "full", name: "Stock width", short: "Stock", key: "1",
+    note: "Today's keyboard. The keys span the full 77 mm width, so a thumb on one side can't reach the far edge.",
+    layout: (rows, { W, H }) => gridLayout([...rows, BOTTOM_WIDE], 2, W - 4, H - 4) },
+  { id: "reachability", name: "Reachability", short: "Reach", key: "2",
+    note: "Apple's iOS 27.3 beta approach. An edge swipe slides the whole screen toward your thumb, so keys on that side go off screen. Apple hasn't published the slide distance, so the slider is a guess.",
+    shift: () => (S.hand === "right" ? 1 : -1) * S.slide,
+    layout: (rows, { W, H }) => {
+      const g = gridLayout([...rows, BOTTOM_WIDE], 2, W - 4, H - 4);
+      const dx = (S.hand === "right" ? 1 : -1) * S.slide;
+      g.keys.forEach(k => { k.cx += dx; });
+      g.box.x += dx;
+      return g;
+    } },
+  { id: "compact", name: "Slide to thumb", short: "Slide", key: "3",
+    note: "Your idea. A narrower QWERTY that you drag toward your thumb. Drag the bar above the keys to move it sideways or up.",
+    layout: (rows, { W, H }) => {
+      const cw = Math.min(S.cw, W - 4);
+      S.pos = Math.max(0, Math.min(S.pos, W - cw - 4));
+      const x0 = S.hand === "right" ? W - 2 - cw - S.pos : 2 + S.pos;
+      return gridLayout([...rows, BOTTOM_WIDE], x0, cw, H - 4 - S.lift);
+    } },
+  { id: "arc", name: "Thumb arc", short: "Arc", key: "4",
+    note: "QWERTY rows bend around the base of your thumb, so each row sits at the same distance from it. The key order stays the same, but the keys are rotated.",
+    layout: (rows, ctx) => arcLayout([...rows, BOTTOM_ARC], ctx) },
+];
+const variant = () => VARIANTS.find(v => v.id === S.variant);
+
+const $ = id => document.getElementById(id);
+let current = { keys: [], P: { x: 0, y: 0 }, s: 1, W: 0, H: 0 };
+
+function dims() {
+  if (S.real) return { W: innerWidth / S.density, H: innerHeight / S.density };
+  return SCREEN;
+}
+
+function fitScale(W, H) {
+  if (S.real) return S.density;
+  const wrap = $("stageWrap").getBoundingClientRect();
+  return Math.max(1, Math.min((wrap.width - 20) / W, (wrap.height - 20) / H));
+}
+
+function keyLabel(k) {
+  switch (k.t) {
+    case "char": return S.shift ? k.v.toUpperCase() : k.v;
+    case "shift": return "⇧";
+    case "back": return "⌫";
+    case "space": return "space";
+    case "enter": return "return";
+    case "layer": return S.layer === "alpha" ? "123" : "ABC";
+  }
+}
+
+function render() {
+  const { W, H } = dims();
+  const s = fitScale(W, H);
+  const P = { x: S.hand === "right" ? W + 6 : -6, y: H - S.grip };
+  const rows = S.layer === "alpha" ? ALPHA : NUM;
+  const { keys, box } = variant().layout(rows, { W, H, P });
+  current = { keys, P, s, W, H };
+
+  const screen = $("screen");
+  screen.style.width = W * s + "px";
+  screen.style.height = H * s + "px";
+
+  const top = Math.min(...keys.map(k => k.cy - k.h / 2));
+  $("doc").style.height = Math.max(0, (top - 3) * s) + "px";
+  $("doc").style.transform = variant().shift ? `translateX(${variant().shift() * s}px)` : "";
+
+  const tray = $("tray");
+  if (box) { tray.hidden = false; Object.assign(tray.style, { left: box.x * s + "px", top: box.y * s + "px", width: box.w * s + "px", height: (H - box.y) * s + "px", borderRadius: S.variant === "compact" ? "10px 10px 0 0" : "0" }); }
+  else tray.hidden = true;
+
+  const svg = $("reach");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.width = W * s + "px"; svg.style.height = H * s + "px";
+  const circ = r => `M ${P.x - r} ${P.y} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0 Z`;
+  svg.innerHTML = `<path d="${circ(S.reach)} ${circ(RMIN)}" fill="var(--accent)" fill-opacity="0.12" fill-rule="evenodd"/>
+    <path d="${circ(S.reach)}" fill="none" stroke="var(--accent)" stroke-width="${1.2 / s}" stroke-dasharray="${4 / s} ${3 / s}"/>`;
+
+  const host = $("keys");
+  host.textContent = "";
+  let inReach = 0, far = 0, minW = Infinity;
+  keys.forEach((key, i) => {
+    const d = Math.hypot(key.cx - P.x, key.cy - P.y);
+    const onScreen = key.cx > 0 && key.cx < W;
+    const ok = onScreen && d >= RMIN && d <= S.reach;
+    if (ok) inReach++;
+    far = Math.max(far, d);
+    if (key.k.t === "char") minW = Math.min(minW, key.w);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "key" + (key.k.t === "char" || key.k.t === "space" ? "" : " mod") + (key.k.t === "shift" && S.shift ? " on" : "") + (ok ? "" : " out");
+    b.dataset.i = i;
+    b.textContent = keyLabel(key.k);
+    const fs = Math.min(key.h, key.w * (key.k.t === "char" ? 1 : 0.6)) * 0.5 * s;
+    Object.assign(b.style, {
+      left: (key.cx - key.w / 2) * s + "px", top: (key.cy - key.h / 2) * s + "px",
+      width: key.w * s + "px", height: key.h * s + "px",
+      transform: key.rot ? `rotate(${key.rot}deg)` : "",
+      fontSize: Math.max(9, Math.min(fs, 24)) + "px",
+    });
+    host.appendChild(b);
+  });
+
+  const handle = $("handle");
+  handle.hidden = S.variant !== "compact";
+  if (S.variant === "compact" && box) Object.assign(handle.style, { left: box.x * s + "px", width: box.w * s + "px", top: box.y * s - 22 + "px" });
+
+  setStat("statReach", `${inReach}/${keys.length}`, inReach === keys.length ? "ok" : inReach / keys.length > 0.85 ? "warn" : "bad");
+  setStat("statSize", `${minW.toFixed(1)} mm`, minW >= 5.3 ? "ok" : minW >= 4.5 ? "warn" : "bad");
+  setStat("statFar", `${far.toFixed(0)} mm`, far <= S.reach ? "ok" : "bad");
+
+  $("target").textContent = PHRASES[S.phrase % PHRASES.length];
+  $("typed").textContent = S.text;
+  syncControls();
+}
+
+function setStat(id, value, tone) { const el = $(id); el.querySelector("b").textContent = value; el.dataset.tone = tone; }
+
+function press(k) {
+  if (!S.trial && (k.t === "char" || k.t === "space")) S.trial = { start: performance.now(), fixes: 0 };
+  switch (k.t) {
+    case "char": S.text += S.shift ? k.v.toUpperCase() : k.v; S.shift = false; break;
+    case "space": S.text += " "; break;
+    case "back": if (S.text) { S.text = S.text.slice(0, -1); if (S.trial) S.trial.fixes++; } break;
+    case "shift": S.shift = !S.shift; break;
+    case "layer": S.layer = S.layer === "alpha" ? "num" : "alpha"; break;
+    case "enter": finishTrial(); break;
+  }
+  render();
+}
+
+function finishTrial() {
+  if (!S.trial || !S.text) return;
+  const minutes = (performance.now() - S.trial.start) / 60000;
+  const target = PHRASES[S.phrase % PHRASES.length];
+  S.results.unshift({ name: variant().name + (S.real ? " · real" : ""), wpm: (S.text.length / 5) / Math.max(minutes, 1e-6), fixes: S.trial.fixes, exact: S.text.trim().toLowerCase() === target });
+  S.text = ""; S.trial = null; S.phrase++; S.layer = "alpha";
+  renderResults();
+}
+
+function renderResults() {
+  const body = $("results");
+  body.innerHTML = S.results.map(r => `<tr><td>${r.name}</td><td class="num">${r.wpm.toFixed(1)}</td><td class="num">${r.fixes}</td><td class="num">${r.exact ? "yes" : "no"}</td></tr>`).join("");
+  $("resultsEmpty").hidden = S.results.length > 0;
+}
+
+$("keys").addEventListener("pointerdown", e => {
+  const b = e.target.closest(".key");
+  if (!b) return;
+  e.preventDefault();
+  const key = current.keys[+b.dataset.i];
+  b.classList.add("down");
+  setTimeout(() => press(key.k), 0);
+});
+
+{
+  let drag = null;
+  const h = $("handle");
+  h.addEventListener("pointerdown", e => { e.preventDefault(); h.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, pos: S.pos, lift: S.lift }; });
+  h.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const dx = (e.clientX - drag.x) / current.s, dy = (e.clientY - drag.y) / current.s;
+    S.pos = Math.max(0, drag.pos + (S.hand === "right" ? -dx : dx));
+    S.lift = Math.max(0, Math.min(current.H * 0.5, drag.lift - dy));
+    render();
+  });
+  const end = () => { drag = null; };
+  h.addEventListener("pointerup", end); h.addEventListener("pointercancel", end);
+  h.addEventListener("dblclick", () => { S.pos = 7; S.lift = 9; render(); });
+}
+
+function buildVariantSeg(host, compact) {
+  host.innerHTML = VARIANTS.map(v => `<button type="button" data-variant="${v.id}">${compact ? v.short : `${v.name}<kbd>${v.key}</kbd>`}</button>`).join("");
+  host.addEventListener("click", e => { const b = e.target.closest("button"); if (b) { S.variant = b.dataset.variant; render(); } });
+}
+buildVariantSeg($("variantSeg"), false);
+buildVariantSeg($("realSeg"), true);
+
+$("handSeg").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { S.hand = b.dataset.hand; render(); } });
+
+const SLIDERS = [
+  ["grip", "grip", v => `${v} mm`], ["reachIn", "reach", v => `${v} mm`], ["cw", "cw", v => `${v} mm`],
+  ["lift", "lift", v => `${Math.round(v)} mm`], ["unit", "unit", v => `${(+v).toFixed(1)} mm`], ["slide", "slide", v => `${v} mm`], ["rot", "rot", v => `${v}°`],
+  ["density", "density", v => `${(+v).toFixed(2)}`],
+];
+for (const [id, field] of SLIDERS) {
+  $(id).addEventListener("input", e => {
+    S[field] = parseFloat(e.target.value);
+    if (field === "density") { try { localStorage.setItem("duo.density", S.density); } catch (err) {} }
+    render();
+  });
+}
+
+function syncControls() {
+  for (const seg of [$("variantSeg"), $("realSeg")]) for (const b of seg.children) b.setAttribute("aria-pressed", b.dataset.variant === S.variant);
+  for (const b of $("handSeg").children) b.setAttribute("aria-pressed", b.dataset.hand === S.hand);
+  $("realHand").textContent = S.hand === "right" ? "Right" : "Left";
+  $("variantNote").textContent = variant().note;
+  for (const el of document.querySelectorAll("[data-for]")) el.hidden = el.dataset.for !== S.variant;
+  for (const [id, field, fmt] of SLIDERS) {
+    const input = $(id);
+    if (document.activeElement !== input) input.value = S[field];
+    $(id === "reachIn" ? "reachOut" : id + "Out").textContent = fmt(S[field]);
+  }
+  $("ruler").style.width = Math.min(50 * S.density, $("ruler").parentElement.clientWidth - 28) + "px";
+}
+
+function setReal(on) { S.real = on; document.body.classList.toggle("real", on); $("realbar").hidden = !on; render(); }
+$("goReal").addEventListener("click", () => setReal(true));
+$("exitReal").addEventListener("click", () => setReal(false));
+$("realHand").addEventListener("click", () => { S.hand = S.hand === "right" ? "left" : "right"; render(); });
+addEventListener("keydown", e => {
+  if (e.target.closest && e.target.closest("input")) return;
+  const v = VARIANTS.find(v => v.key === e.key);
+  if (v) { S.variant = v.id; render(); }
+});
+new ResizeObserver(() => render()).observe($("stageWrap"));
+renderResults();
+if (matchMedia("(max-width: 600px)").matches) setReal(true);
+else render();
+</script>
