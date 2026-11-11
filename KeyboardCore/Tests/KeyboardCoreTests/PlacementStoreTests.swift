@@ -24,15 +24,37 @@ import KeyboardCore
         #expect(store.load() == p)
     }
 
+    private func store(json: String) -> Placement {
+        defaults.set(Data(json.utf8), forKey: "placement.v1")
+        return store.load()
+    }
+
     @Test func corruptDataLoadsDefault() {
-        // TODO: defaults.set(Data("nope".utf8), forKey: "placement.v1") -> .default
+        defaults.set(Data("nope".utf8), forKey: "placement.v1")
+        #expect(store.load() == .default)
     }
 
     @Test func invalidFieldsFallBackFieldByField() {
-        // TODO: {"hand":"left","insetMM":-3,"liftMM":1e308} -> (left, 7, 9);  NaN -> default for that field
+        #expect(store(json: #"{"hand":"left","insetMM":-3,"liftMM":1e308}"#) == Placement(hand: .left, inset: 7, lift: 9))
+        #expect(store(json: #"{"hand":"left","insetMM":"nan","liftMM":12}"#) == Placement(hand: .left, inset: 7, lift: 12))
+        #expect(store(json: #"{"hand":"left","insetMM":"wide","liftMM":12}"#) == Placement(hand: .left, inset: 7, lift: 12))
     }
 
     @Test func unknownHandFallsBack() {
-        // TODO: hand "both" -> .right, other fields kept
+        #expect(store(json: #"{"hand":"both","insetMM":11,"liftMM":12}"#) == Placement(hand: .right, inset: 11, lift: 12))
+    }
+
+    @Test func storedPositionIsNotClampedToAnyScreen() {
+        let wide = Placement(hand: .right, inset: 80, lift: 9)
+        store.save(wide)
+        #expect(store.load() == wide)
+    }
+
+    @Test func savingTwiceWritesTheSameBytes() {
+        let p = Placement(hand: .left, inset: 12.5, lift: 20)
+        store.save(p)
+        let first = defaults.data(forKey: "placement.v1")
+        store.save(p)
+        #expect(defaults.data(forKey: "placement.v1") == first)
     }
 }
