@@ -108,7 +108,10 @@ public struct KeyboardEngine: Sendable {
     /// When the shell should next send `.tick`, or nil for no timer. The shell reconciles a
     /// single timer to this value after every input (derive, don't sync: there is no
     /// "schedule" / "cancel" effect to get out of order).
-    public var nextWake: Instant? { fatalError("not implemented") }
+    public var nextWake: Instant? {
+        guard case let .backspace(_, since, emitted) = gesture else { return nil }
+        return since + (Timing.repeatDelay + Double(emitted - 1) * Timing.repeatInterval)
+    }
 
     /// The single entry point. Total: every input is valid in every state.
     public mutating func send(_ input: KeyboardInput) -> [TextEdit] {
@@ -134,7 +137,33 @@ public struct KeyboardEngine: Sendable {
     ///   `.flipButton`      -> `.flip(over: true)`
     ///   `.none`            -> nothing
     private mutating func touchBegan(_ id: TouchID, _ point: KeyboardPoint, _ at: Instant) -> [TextEdit] {
-        fatalError("not implemented")
+        // Hit-test against what the user saw, before a rollover commit can change the layer.
+        let current = layout
+        let target = current.hitTest(point)
+        var edits: [TextEdit] = []
+        switch gesture {
+        case let .key(_, began, over?):
+            edits = commit(over, began: began, ended: at)
+        case .handle, .flip:
+            return []
+        case .key, .backspace, nil:
+            break
+        }
+        gesture = nil
+        switch target {
+        case .key(.backspace):
+            edits.append(.deleteBackward)
+            gesture = .backspace(id, since: at, emitted: 1)
+        case .key(.globe), .none:
+            break
+        case .key(let key):
+            gesture = .key(id, began: at, over: key)
+        case .handle:
+            gesture = .handle(id, start: point, from: current.placement, dragged: nil)
+        case .flipButton:
+            gesture = .flip(id, over: true)
+        }
+        return edits
     }
 
     /// Only the tracked touch matters. `.key`: re-hit-test, `over` becomes the key under the
@@ -142,7 +171,29 @@ public struct KeyboardEngine: Sendable {
     /// is `from` moved by the delta (right hand: inset -= dx; left: inset += dx; lift += dy,
     /// y-up so no sign flip), lift snapped to `LayoutSpec.liftStep`, then clamped.
     private mutating func touchMoved(_ id: TouchID, _ point: KeyboardPoint, _ at: Instant) {
-        fatalError("not implemented")
+        guard let current = gesture, current.touch == id else { return }
+        switch current {
+        case let .key(_, began, _):
+            gesture = .key(id, began: began, over: Self.committableKey(layout.hitTest(point)))
+        case let .handle(_, start, from, dragged):
+            let dx = point.x - start.x, dy = point.y - start.y
+            guard dragged != nil || hypot(dx.value, dy.value) >= Timing.dragSlop.value else { return }
+            let inset = from.hand == .right ? from.inset - dx : from.inset + dx
+            let lift = Millimetres(((from.lift + dy) / LayoutSpec.liftStep).rounded()) * LayoutSpec.liftStep.value
+            let moved = Placement(hand: from.hand, inset: inset, lift: lift).clamped(to: environment)
+            gesture = .handle(id, start: start, from: from, dragged: moved)
+        case .flip:
+            gesture = .flip(id, over: layout.hitTest(point) == .flipButton)
+        case .backspace:
+            break
+        }
+    }
+
+    /// The key a held touch would commit: backspace acts on touch down and the globe belongs to
+    /// the shell's control, so neither can be the target of a slide.
+    private static func committableKey(_ target: HitTarget) -> KeyID? {
+        guard case .key(let key) = target, key != .backspace, key != .globe else { return nil }
+        return key
     }
 
     /// `.key`: commit the key under `point` (re-hit-tested; nil commits nothing).
@@ -151,12 +202,38 @@ public struct KeyboardEngine: Sendable {
     /// (keeping the hand). `.flip`: if still over the button, commit
     /// `layout.placement` with the hand mirrored (so a clamped position flips as seen).
     private mutating func touchEnded(_ id: TouchID, _ point: KeyboardPoint, _ at: Instant) -> [TextEdit] {
-        fatalError("not implemented")
+        guard let ending = gesture, ending.touch == id else { return [] }
+        let target = layout.hitTest(point)
+        let effective = layout.placement
+        gesture = nil
+        switch ending {
+        case let .key(_, began, _):
+            guard let key = Self.committableKey(target) else { return [] }
+            return commit(key, began: began, ended: at)
+        case .backspace:
+            return []
+        case let .handle(_, _, _, dragged):
+            if let dragged {
+                placement = dragged
+                lastTap = nil
+            } else if let previous = lastTap, previous.target == .handle,
+                      at - previous.ended <= Timing.doubleTapWindow {
+                placement = Placement(hand: effective.hand, inset: Placement.default.inset, lift: Placement.default.lift)
+                lastTap = nil
+            } else {
+                lastTap = LastTap(target: .handle, ended: at)
+            }
+            return []
+        case let .flip(_, over):
+            if over && target == .flipButton {
+                placement = Placement(hand: effective.hand.mirrored, inset: effective.inset, lift: effective.lift)
+            }
+            return []
+        }
     }
 
     private mutating func touchCancelled(_ id: TouchID) {
-        // TODO: if gesture?.touch == id { gesture = nil }. No commit of any kind.
-        fatalError("not implemented")
+        if gesture?.touch == id { gesture = nil }
     }
 
     /// Backspace repeat. Deletes owed by `now` for a hold starting at `since`:
@@ -165,12 +242,22 @@ public struct KeyboardEngine: Sendable {
     /// Emit one `.deleteBackward` if owed > emitted, then set emitted = owed (dropping any
     /// backlog). Otherwise emit nothing.
     private mutating func tick(_ now: Instant) -> [TextEdit] {
-        fatalError("not implemented")
+        guard case let .backspace(id, since, emitted) = gesture else { return [] }
+        let held = now - since
+        // The epsilon keeps a tick scheduled exactly on a boundary from rounding down to the
+        // previous count.
+        let owed = held < Timing.repeatDelay
+            ? 1 : 2 + Int(((held - Timing.repeatDelay) / Timing.repeatInterval + 1e-9).rounded(.down))
+        guard owed > emitted else { return [] }
+        gesture = .backspace(id, since: since, emitted: owed)
+        return [.deleteBackward]
     }
 
     /// No-op when equal. Otherwise store it and cancel any gesture (its geometry is gone).
     private mutating func environmentChanged(_ env: Environment) {
-        fatalError("not implemented")
+        guard env != environment else { return }
+        environment = env
+        gesture = nil
     }
 
     /// Applies one key's action.
@@ -181,7 +268,30 @@ public struct KeyboardEngine: Sendable {
     /// - `.layerToggle`: flip layer; `.once` -> `.off` (`.locked` survives the round trip).
     /// - `.backspace`, `.globe`: never committed here (see touchBegan).
     private mutating func commit(_ key: KeyID, began: Instant, ended: Instant) -> [TextEdit] {
-        fatalError("not implemented")
+        switch key {
+        case .character(let c):
+            let upper = layer == .letters && shift != .off
+            if case .once = shift { shift = .off }
+            return [.insert(upper ? String(c).uppercased() : String(c))]
+        case .space:
+            return [.insert(" ")]
+        case .return:
+            return [.insert("\n")]
+        case .shift:
+            switch shift {
+            case .off: shift = .once(armedAt: ended)
+            case .once(let armedAt):
+                shift = began - armedAt <= Timing.doubleTapWindow ? .locked : .off
+            case .locked: shift = .off
+            }
+            return []
+        case .layerToggle:
+            layer = layer == .letters ? .symbols : .letters
+            if case .once = shift { shift = .off }
+            return []
+        case .backspace, .globe:
+            return []
+        }
     }
 }
 
@@ -190,14 +300,30 @@ public struct KeyboardEngine: Sendable {
 private enum Gesture: Sendable {
     case key(TouchID, began: Instant, over: KeyID?)
     case backspace(TouchID, since: Instant, emitted: Int)
-    case handle(TouchID, began: Instant, start: KeyboardPoint, from: Placement, dragged: Placement?)
+    case handle(TouchID, start: KeyboardPoint, from: Placement, dragged: Placement?)
     case flip(TouchID, over: Bool)
 
-    var touch: TouchID { fatalError("not implemented") }
+    var touch: TouchID {
+        switch self {
+        case .key(let id, _, _), .backspace(let id, _, _), .handle(let id, _, _, _), .flip(let id, _): id
+        }
+    }
+
     /// Non-nil only while a handle drag is past the slop.
-    var draggedPlacement: Placement? { fatalError("not implemented") }
+    var draggedPlacement: Placement? {
+        guard case .handle(_, _, _, let dragged) = self else { return nil }
+        return dragged
+    }
+
     /// What the face draws as pressed.
-    var pressedTarget: HitTarget? { fatalError("not implemented") }
+    var pressedTarget: HitTarget? {
+        switch self {
+        case .key(_, _, let over): over.map { .key($0) }
+        case .backspace: .key(.backspace)
+        case .handle: .handle
+        case .flip(_, let over): over ? .flipButton : nil
+        }
+    }
 }
 
 private struct LastTap: Sendable {

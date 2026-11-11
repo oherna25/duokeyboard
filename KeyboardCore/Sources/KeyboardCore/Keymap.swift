@@ -44,6 +44,30 @@ enum Keymap {
     /// Invariant (tested): no row is wider than 10u, and `KeyID`s are unique within a layer,
     /// so `Layout.slot(of:)` is well defined.
     static func rows(for layer: Layer, showsGlobeKey: Bool) -> [[KeySpec]] {
-        fatalError("not implemented")
+        func chars(_ s: String, width: Double = 1) -> [KeySpec] {
+            s.map { KeySpec(id: .character($0), width: width) }
+        }
+        let backspace = KeySpec(id: .backspace, width: 1.5)
+        let upper: [[KeySpec]]
+        switch layer {
+        case .letters:
+            upper = [
+                chars("qwertyuiop"),
+                chars("asdfghjkl"),
+                [KeySpec(id: .shift, width: 1.5)] + chars("zxcvbnm") + [backspace],
+            ]
+        case .symbols:
+            upper = [
+                chars("1234567890"),
+                chars("-/:;()$&@\""),
+                chars(".,?!'", width: 1.4) + [backspace],
+            ]
+        }
+        let toggle = KeySpec(id: .layerToggle, width: 2.5)
+        let enter = KeySpec(id: .return, width: 2.5)
+        let bottom = showsGlobeKey
+            ? [toggle, KeySpec(id: .globe, width: 1.5), KeySpec(id: .space, width: 3.5), enter]
+            : [toggle, KeySpec(id: .space, width: 5), enter]
+        return upper + [bottom]
     }
 }

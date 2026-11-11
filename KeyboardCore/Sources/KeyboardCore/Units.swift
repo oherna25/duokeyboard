@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // MARK: - Length
@@ -53,7 +54,9 @@ public struct MMPoint<Space>: Hashable, Sendable {
     public var y: Millimetres
     public init(x: Millimetres, y: Millimetres) { self.x = x; self.y = y }
 
-    public func distance(to other: Self) -> Millimetres { fatalError("not implemented") }
+    public func distance(to other: Self) -> Millimetres {
+        Millimetres(hypot((x - other.x).value, (y - other.y).value))
+    }
 }
 
 public struct MMSize: Hashable, Sendable {
@@ -72,11 +75,19 @@ public struct MMRect<Space>: Hashable, Sendable {
     public var minY: Millimetres { origin.y }
     public var maxX: Millimetres { origin.x + size.width }
     public var maxY: Millimetres { origin.y + size.height }
-    public var center: MMPoint<Space> { fatalError("not implemented") }
+    public var center: MMPoint<Space> {
+        MMPoint(x: origin.x + size.width * 0.5, y: origin.y + size.height * 0.5)
+    }
 
     /// Half-open on the max edges so adjacent slots never both contain a boundary point.
-    public func contains(_ p: MMPoint<Space>) -> Bool { fatalError("not implemented") }
-    public func insetBy(dx: Millimetres, dy: Millimetres) -> Self { fatalError("not implemented") }
+    public func contains(_ p: MMPoint<Space>) -> Bool {
+        p.x >= minX && p.x < maxX && p.y >= minY && p.y < maxY
+    }
+
+    public func insetBy(dx: Millimetres, dy: Millimetres) -> Self {
+        Self(origin: MMPoint(x: origin.x + dx, y: origin.y + dy),
+             size: MMSize(width: size.width - dx * 2, height: size.height - dy * 2))
+    }
 }
 
 public typealias KeyboardPoint = MMPoint<KeyboardSpace>
@@ -109,8 +120,11 @@ public struct PointsPerMillimetre: Hashable, Sendable {
     /// with a fallback by scale (@3x -> 460 ppi, @2x -> 326 ppi), which is right for every
     /// current iPhone panel to within a few percent.
     public static func resolve(nativePixelSize: CGSize, scale: CGFloat) -> PointsPerMillimetre {
-        // TODO: table lookup (orientation-insensitive: compare sorted dimensions), then fallback.
-        fatalError("not implemented")
+        let long = max(nativePixelSize.width, nativePixelSize.height)
+        let short = min(nativePixelSize.width, nativePixelSize.height)
+        if long == 2034, short == 1398 { return .duoOuter }
+        let ppi: Double = scale >= 3 ? 460 : scale >= 2 ? 326 : 163
+        return PointsPerMillimetre(unchecked: ppi / 25.4 / Double(scale >= 1 ? scale : 1))
     }
 
     public func points(_ length: Millimetres) -> CGFloat { CGFloat(length.value * value) }
@@ -119,7 +133,7 @@ public struct PointsPerMillimetre: Hashable, Sendable {
     /// UIKit view location (y-down, points) -> keyboard space (y-up, mm).
     /// `viewHeight` is the input view's *current* bounds height, read at the moment of the touch.
     public func keyboardPoint(fromView location: CGPoint, viewHeight: CGFloat) -> KeyboardPoint {
-        fatalError("not implemented")
+        KeyboardPoint(x: millimetres(location.x), y: millimetres(viewHeight - location.y))
     }
 
     /// A y-up rect inside a container of height `containerHeight` -> a y-down UIKit rect in
@@ -127,6 +141,8 @@ public struct PointsPerMillimetre: Hashable, Sendable {
     /// input view), the globe control's frame, and every rect FaceView draws (face space,
     /// container = face).
     public func viewRect<Space>(_ rect: MMRect<Space>, containerHeight: Millimetres) -> CGRect {
-        fatalError("not implemented")
+        let origin = CGPoint(x: points(rect.minX), y: points(containerHeight - rect.maxY))
+        let size = CGSize(width: points(rect.size.width), height: points(rect.size.height))
+        return CGRect(origin: origin, size: size)
     }
 }
