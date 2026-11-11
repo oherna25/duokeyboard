@@ -4,3 +4,5 @@ _site/
 *.xcodeproj
 KeyboardCore/.build
 build/
+App/Info.plist
+Keyboard/Info.plist

@@ -13,19 +13,24 @@ struct DuoKeyboardApp: App {
 /// Numbered steps, a button to Settings, and a field to type in.
 struct SetupView: View {
     @State private var trial = ""
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
-        // TODO:
-        // Form {
-        //   Section("Turn it on") {
-        //     Text("1. Open Settings > General > Keyboard > Keyboards.")
-        //     Text("2. Tap Add New Keyboard and choose Duo Keyboard.")
-        //     Text("3. In any text field, hold the globe key and pick Duo Keyboard.")
-        //     Button("Open Settings") { openURL(URL(string: UIApplication.openSettingsURLString)!) }
-        //   }
-        //   Section("Try it") { TextField("Type here", text: $trial, axis: .vertical) }
-        //   Section("Move it") { Text("Drag the bar above the keys. Tap ⇆ to switch hands. Double-tap the bar to reset.") }
-        // }
-        fatalError("not implemented")
+        Form {
+            Section("Turn it on") {
+                Text("1. Open Settings > General > Keyboard > Keyboards.")
+                Text("2. Tap Add New Keyboard and choose Duo Keyboard.")
+                Text("3. In any text field, hold the globe key and pick Duo Keyboard.")
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+            }
+            Section("Try it") {
+                TextField("Type here", text: $trial, axis: .vertical)
+            }
+            Section("Move it") {
+                Text("Drag the bar above the keys to move them sideways or up. Tap the arrows at the end of the bar to switch hands. Double-tap the bar to reset.")
+            }
+        }
     }
 }

@@ -31,11 +31,16 @@ final class KeyboardViewController: UIInputViewController {
     private let globeControl = UIControl()
     private var heightConstraint: NSLayoutConstraint?
     private var wakeTask: Task<Void, Never>?
+    private var scheduledWake: Instant?
+    /// Fingers currently down on the root view, so `viewWillDisappear` can cancel them: the
+    /// engine tracks one touch by id and the system sends no cancel when the keyboard is dismissed.
+    private var liveTouches: Set<TouchID> = []
 
     // MARK: Lifecycle
 
     /// The engine exists from construction (no implicitly unwrapped optional). It starts on the
-    /// Duo outer surface; the real environment arrives in viewDidLoad before anything is drawn.
+    /// Duo outer surface; the real environment arrives in viewDidLayoutSubviews before anything
+    /// is drawn.
     override init(nibName: String?, bundle: Bundle?) {
         store = PlacementStore(defaults: .standard)
         lastSaved = store.load()
@@ -48,22 +53,39 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // TODO:
-        // view.isMultipleTouchEnabled = true          // rollover needs the second finger
-        // faceView.isUserInteractionEnabled = false; view.addSubview(faceView)  (frame-positioned, no Auto Layout)
-        // globeControl.addTarget(self, action: #selector(handleInputModeList(from:with:)), for: .allTouchEvents)
-        // view.addSubview(globeControl)
-        // refreshEnvironment(); reconcile()
-        fatalError("not implemented")
+        view.isMultipleTouchEnabled = true
+        faceView.isUserInteractionEnabled = false
+        view.addSubview(faceView)
+        globeControl.addTarget(self, action: #selector(handleInputModeList(from:with:)), for: .allTouchEvents)
+        view.addSubview(globeControl)
+        refreshEnvironment()
+        reconcile()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // Install the height constraint here, not in viewDidLoad: the system adds its own
-        // height constraint on presentation, and ours must exist alongside it at priority 999
-        // to win without an unsatisfiable-constraints log.
-        // TODO: heightConstraint = view.heightAnchor.constraint(equalToConstant: ...); priority = .required - 1; isActive = true
+        // Installed here, not in viewDidLoad: the system adds its own height constraint on
+        // presentation, and ours must exist alongside it at priority 999 to win without an
+        // unsatisfiable-constraints log.
+        if heightConstraint == nil {
+            let constraint = view.heightAnchor.constraint(equalToConstant: 0)
+            constraint.priority = UILayoutPriority(UILayoutPriority.required.rawValue - 1)
+            constraint.isActive = true
+            heightConstraint = constraint
+        }
         refreshEnvironment()
+        reconcile()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // A held backspace must not keep deleting after the keyboard goes away.
+        let held = liveTouches
+        liveTouches = []
+        for id in held { send(.touchCancelled(id)) }
+        wakeTask?.cancel()
+        wakeTask = nil
+        scheduledWake = nil
     }
 
     override func viewDidLayoutSubviews() {
@@ -71,6 +93,7 @@ final class KeyboardViewController: UIInputViewController {
         // Width changes on fold / unfold and rotation. Idempotent: an equal environment is a
         // no-op inside the engine, and reconcile() only touches what changed.
         refreshEnvironment()
+        reconcile()
     }
 
     override func textDidChange(_ textInput: (any UITextInput)?) {
@@ -82,16 +105,28 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: Touches -> engine
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches { send(.touchBegan(id(touch), point(touch), at: instant(touch))) }
+        for touch in touches {
+            liveTouches.insert(id(touch))
+            send(.touchBegan(id(touch), point(touch), at: instant(touch)))
+        }
     }
+
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches { send(.touchMoved(id(touch), point(touch), at: instant(touch))) }
     }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches { send(.touchEnded(id(touch), point(touch), at: instant(touch))) }
+        for touch in touches {
+            liveTouches.remove(id(touch))
+            send(.touchEnded(id(touch), point(touch), at: instant(touch)))
+        }
     }
+
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches { send(.touchCancelled(id(touch))) }
+        for touch in touches {
+            liveTouches.remove(id(touch))
+            send(.touchCancelled(id(touch)))
+        }
     }
 
     private func id(_ touch: UITouch) -> TouchID { TouchID(UInt(bitPattern: ObjectIdentifier(touch))) }
@@ -117,43 +152,72 @@ final class KeyboardViewController: UIInputViewController {
     private func reconcile() {
         let layout = engine.layout
         let density = engine.environment.surface.density
-        // TODO:
-        // 1. heightConstraint?.constant = density.points(layout.height)     (if different)
-        // 2. faceView.frame = density.viewRect(layout.faceFrame, containerHeight: layout.height)
-        //    (moves during a drag; no redraw)
-        // 3. faceView.face = layout.face; faceView.density = density   (FaceView redraws only on change)
-        // 4. globeControl: frame = layout.slot(of: .globe).map { density.viewRect($0, containerHeight: layout.height) },
-        //    isHidden = (slot == nil)
-        // 5. if engine.placement != lastSaved { store.save(engine.placement); lastSaved = engine.placement }
-        // 6. scheduleWake(engine.nextWake)
-        _ = (layout, density)
-        fatalError("not implemented")
+
+        let height = density.points(layout.height)
+        if let heightConstraint, heightConstraint.constant != height { heightConstraint.constant = height }
+
+        // Position from the view's actual bottom edge, the same reference the touch conversion
+        // uses, so the face and the finger agree even while the height constraint catches up.
+        let container = view.bounds.height > 0 ? density.millimetres(view.bounds.height) : layout.height
+        let frame = density.viewRect(layout.faceFrame, containerHeight: container)
+        if faceView.frame != frame { faceView.frame = frame }
+        faceView.density = density
+        faceView.face = layout.face
+
+        let globeSlot = layout.slot(of: .globe)
+        let globeFrame = globeSlot.map { density.viewRect($0, containerHeight: container) } ?? .zero
+        if globeControl.frame != globeFrame { globeControl.frame = globeFrame }
+        globeControl.isHidden = globeSlot == nil
+
+        if engine.placement != lastSaved {
+            store.save(engine.placement)
+            lastSaved = engine.placement
+        }
+        scheduleWake(engine.nextWake)
     }
 
     /// One timer slot, replaced on every reconcile. Correct even if a stale task fires,
     /// because `.tick` is idempotent.
     private func scheduleWake(_ wake: Instant?) {
-        // TODO: if unchanged, return. wakeTask?.cancel(); guard let wake else { return }
-        // wakeTask = Task { try? await Task.sleep(for: .seconds(wake - now)); guard !Task.isCancelled else { return }
-        //                   send(.tick(Instant(secondsSinceBoot: ProcessInfo.processInfo.systemUptime))) }
-        fatalError("not implemented")
+        guard wake != scheduledWake else { return }
+        scheduledWake = wake
+        wakeTask?.cancel()
+        wakeTask = nil
+        guard let wake else { return }
+        let delay = max(0, wake.secondsSinceBoot - ProcessInfo.processInfo.systemUptime)
+        wakeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            // Cleared first: a tick that emits nothing leaves nextWake unchanged, and the
+            // reconcile after it must still be allowed to schedule the same deadline again.
+            self.scheduledWake = nil
+            self.send(.tick(Instant(secondsSinceBoot: ProcessInfo.processInfo.systemUptime)))
+        }
     }
 
     // MARK: Environment
 
     private func refreshEnvironment() {
-        let env = measureEnvironment()
-        if env != engine.environment { send(.environmentChanged(env)) }
+        guard let env = measureEnvironment(), env != engine.environment else { return }
+        send(.environmentChanged(env))
     }
 
-    /// The only place screen facts are read.
-    /// - density: `PointsPerMillimetre.resolve(nativePixelSize: screen.nativeBounds.size, scale: screen.nativeScale)`
-    ///   where `screen = view.window?.windowScene?.screen` (fallback `.duoOuter` before the view is in a window)
-    /// - width: `view.bounds.width`; screenHeight: `screen.bounds.height`
-    /// - bottomInset: screen bottom minus the input view's bottom, via
-    ///   `view.convert(view.bounds, to: screen.coordinateSpace)`, clamped >= 0 (0 if unavailable)
-    /// - showsGlobeKey: `needsInputModeSwitchKey`
-    private func measureEnvironment() -> Environment {
-        fatalError("not implemented")
+    /// The only place screen facts are read. Nil until the view has a width.
+    ///
+    /// `bottomInset` stays 0 in v1. Deriving it from the input view's frame in screen
+    /// coordinates feeds the view's own height back into the environment, which would cancel
+    /// drags (an environment change cancels the gesture) and could collapse the lift. Measure
+    /// the real system-bar height on the device before wiring it.
+    private func measureEnvironment() -> Environment? {
+        let width = view.bounds.width
+        guard width > 0 else { return nil }
+        let screen = view.window?.screen
+        let density = screen.map {
+            PointsPerMillimetre.resolve(nativePixelSize: $0.nativeBounds.size, scale: $0.nativeScale)
+        } ?? .duoOuter
+        let screenHeight = screen.map { density.millimetres($0.bounds.height) } ?? Surface.duoOuter.screenHeight
+        let surface = Surface(width: density.millimetres(width), screenHeight: screenHeight,
+                              bottomInset: 0, density: density)
+        return Environment(surface: surface, showsGlobeKey: needsInputModeSwitchKey)
     }
 }
